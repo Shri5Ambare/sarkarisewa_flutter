@@ -1,0 +1,224 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Function to check if user is logged in
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // Function to check if current user is an Admin or Super Admin
+    function isAdmin() {
+      return isSignedIn() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin'
+      );
+    }
+
+    // Function to check if current user is a Super Admin
+    function isSuperAdmin() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin';
+    }
+
+    // Function to check if current user is a Teacher, Admin, or Super Admin
+    function isTeacherOrAdmin() {
+      return isSignedIn() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'super_admin'
+      );
+    }
+
+    // Validates a client-side course-enrollment coin deduction.
+    // Reads the actual course price from Firestore so the client cannot fake it.
+    function isValidCoinSpend(req, res) {
+      let courseId  = req.resource.data.get('lastEnrolledCourseId', '');
+      let courseRef = /databases/$(database)/documents/courses/$(courseId);
+      let prevCoins = int(res.data.get('coins', 0));
+      let newCoins  = int(req.resource.data.get('coins', 0));
+      let prevCourses = res.data.get('enrolledCourses', []);
+      let newCourses  = req.resource.data.get('enrolledCourses', []);
+      return courseId != '' &&
+        exists(courseRef) &&
+        int(get(courseRef).data.price) == prevCoins - newCoins &&
+        prevCoins >= int(get(courseRef).data.price) &&
+        courseId in newCourses &&
+        !(courseId in prevCourses) &&
+        newCourses.size() == prevCourses.size() + 1;
+    }
+
+    // 1. Users Collection
+    // Users can read their own data; admins/teachers can read all.
+    // Writes are restricted to prevent role/coin/access escalation from clients.
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin() || isTeacherOrAdmin());
+      allow create: if isAdmin() || (
+        isSignedIn() &&
+        request.auth.uid == userId &&
+        request.resource.data.role == 'student' &&
+        request.resource.data.tier == 'free' &&
+        request.resource.data.writingAccess == false &&
+        request.resource.data.groupAccess == false &&
+        (!('coins' in request.resource.data) || request.resource.data.coins == 0) &&
+        (!('points' in request.resource.data) || request.resource.data.points == 0) &&
+        (!('enrolledCourses' in request.resource.data) || request.resource.data.enrolledCourses == [])
+      );
+      // Super admin can update anything (including role field).
+      // Regular admin can update all fields EXCEPT role (prevents self-escalation to super_admin).
+      // Regular users can update their own profile within the constrained fields only.
+      allow update: if isSuperAdmin() || (
+        isAdmin() &&
+        request.resource.data.role == resource.data.role
+      ) || (
+        isSignedIn() &&
+        request.auth.uid == userId &&
+        // Fixed: Ensure only allowed fields are changed
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['name', 'email', 'fcmToken', 'coins', 'enrolledCourses', 'lastEnrolledCourseId', 'friends']) &&
+        // Constrain sensitive field changes
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.tier == resource.data.tier &&
+        request.resource.data.writingAccess == resource.data.writingAccess &&
+        request.resource.data.groupAccess == resource.data.groupAccess &&
+        // Validate coin spend if coins change
+        (request.resource.data.coins == resource.data.coins || isValidCoinSpend(request, resource))
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 2. Global Settings Collection
+    // Anyone logged in can read (for Bank details, Cloudinary keys); Only Admins can write
+    match /settings/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // 3. Courses
+    // Anyone logged in can read; Only Teachers/Admins can write
+    match /courses/{courseId} {
+      allow read: if isSignedIn();
+      allow write: if isTeacherOrAdmin();
+    }
+
+    // 4. Mock Tests (top-level collection used by FirestoreService)
+    // Anyone logged in can read; Only Teachers/Admins can create/update/delete
+    match /mock_tests/{testId} {
+      allow read: if isSignedIn();
+      allow write: if isTeacherOrAdmin();
+    }
+
+    // 5. Mock Test Results
+    // Users can read/create their own results; Admins can read all
+    match /mock_test_results/{resultId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // 6. Payment Requests
+    // Users can read/create their own requests; Admins can read/update all
+    match /payment_requests/{reqId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // 7. Orders
+    // Users can read their own; Teachers/Admins can read all; Admins can write all
+    match /orders/{orderId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.studentId || isTeacherOrAdmin());
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.studentId;
+      allow update, delete: if isAdmin();
+    }
+
+    // 8. Submissions (Writing Practice)
+    // Users can read/write their own; Teachers/Admins can read/write all
+    match /submissions/{subId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.studentId || isTeacherOrAdmin());
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.studentId;
+      allow update, delete: if isTeacherOrAdmin();
+    }
+
+    // 9. Transactions (SS Coin wallet history)
+    // Users can read their own; Admins can read all; only server/admin can write
+    match /transactions/{txnId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.uid &&
+        request.resource.data.type == 'spend';
+      allow update, delete: if isAdmin();
+    }
+
+    // 10. Viva Results
+    // Users can read their own; Admins can read all; users create their own
+    match /viva_results/{resultId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // 11. News Feed
+    // Anyone logged in can read; Only Teachers/Admins can write
+    match /news/{newsId} {
+      allow read: if isSignedIn();
+      allow write: if isTeacherOrAdmin();
+    }
+
+    // 12. Student Groups
+    // Only Teachers/Admins can write; Members/Teacher/Admin can read
+    match /groups/{groupId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid in resource.data.studentIds ||
+        request.auth.uid == resource.data.teacherId ||
+        isAdmin()
+      );
+      allow write: if isTeacherOrAdmin();
+    }
+
+    // 13. Battles — only involved parties can read/write
+    match /battles/{battleId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == resource.data.initiatorUid ||
+        request.auth.uid == resource.data.opponentUid ||
+        isAdmin()
+      );
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && (
+        request.auth.uid == resource.data.initiatorUid ||
+        request.auth.uid == resource.data.opponentUid
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 14. Friend Requests — only involved parties can write
+    match /friend_requests/{reqId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == resource.data.fromUid ||
+        request.auth.uid == resource.data.toUid
+      );
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.fromUid;
+      allow update: if isSignedIn() && (
+        request.auth.uid == resource.data.fromUid ||
+        request.auth.uid == resource.data.toUid
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 15. Leaderboard
+    match /leaderboard/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // 16. Activity Logs
+    match /activity_logs/{logId} {
+      allow read: if isTeacherOrAdmin();
+      allow create: if isSignedIn();
+    }
+
+    // Default lockdown fallback
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

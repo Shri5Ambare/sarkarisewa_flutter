@@ -1,0 +1,69 @@
+name: sarkarisewa
+description: "Nepal's #1 AI-Powered Government Exam Preparation Platform"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.10.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # Firebase
+  firebase_core: ^4.5.0
+  firebase_auth: ^6.2.0
+  cloud_firestore: ^6.1.3
+
+  # State & Navigation
+  provider: ^6.1.2
+  go_router: ^17.1.0
+
+  # UI
+  google_fonts: ^8.0.2
+
+  # Utilities
+  intl: ^0.20.2
+  uuid: ^4.5.1
+  shared_preferences: ^2.3.2
+  file_picker: ^10.3.10
+  http: ^1.6.0
+  speech_to_text: ^7.3.0
+  flutter_tts: ^4.2.5
+  google_generative_ai: ^0.4.7
+  cloud_functions: ^6.0.7
+  firebase_app_check: ^0.4.1+5
+  flutter_dotenv: ^5.1.0
+  cloudflare_r2: any
+  mime: ^1.0.6
+  # Payment & local storage
+  url_launcher: ^6.3.2
+  firebase_messaging: ^16.1.2
+  flutter_local_notifications: ^21.0.0
+  firebase_analytics: ^12.1.3
+  lottie: ^3.3.2
+  just_audio: ^0.10.3
+  path_provider: ^2.1.5
+  xml: ^6.5.0
+  flutter_image_compress: ^2.4.0
+  shimmer: ^3.0.0
+  fl_chart: ^1.1.1
+  csv: ^7.2.0
+  share_plus: ^12.0.1
+  image: ^4.8.0
+  firebase_storage: ^13.1.0
+  geolocator: ^13.0.1
+  geocoding: ^3.0.0
+  firebase_crashlytics: ^5.0.8
+  firebase_performance: ^0.11.1+5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "753185635900",
+    "project_id": "sarkari-f5155",
+    "storage_bucket": "sarkari-f5155.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:753185635900:android:5e3099aec868b625148d39",
+        "android_client_info": {
+          "package_name": "np.sarkarisewa.sarkarisewa"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCe4xssaPA2CsqiqGcUOfWiTEiMWsUYlBQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

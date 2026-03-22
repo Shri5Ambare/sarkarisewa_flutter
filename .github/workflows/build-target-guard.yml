@@ -1,0 +1,53 @@
+name: Build Target Guard
+
+on:
+  pull_request:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  client-apk:
+    name: Client APK (target guard)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Verify client target
+        shell: pwsh
+        run: ./scripts/assert_flutter_target.ps1 -Profile android-apk -Target lib/main.dart
+
+      - name: Build client apk
+        run: flutter build apk --debug --target=lib/main.dart
+
+  admin-web:
+    name: Admin Web (target guard)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Verify admin web target
+        shell: pwsh
+        run: ./scripts/assert_flutter_target.ps1 -Profile admin-web -Target lib/main_admin_web.dart
+
+      - name: Build admin web
+        run: flutter build web --release --target=lib/main_admin_web.dart
