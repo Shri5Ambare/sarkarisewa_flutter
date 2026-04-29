@@ -7,7 +7,6 @@ import '../providers/locale_provider.dart';
 import '../services/firestore_service.dart';
 import '../l10n/strings.dart';
 import '../theme.dart';
-import '../widgets/responsive_scaffold.dart';
 import '../widgets/shimmer_loader.dart';
 import '../widgets/app_button.dart';
 
@@ -31,8 +30,7 @@ class SocialScreen extends StatelessWidget {
     final lang = context.watch<LocaleProvider>().lang;
     final db   = FirestoreService();
 
-    return ResponsiveScaffold(
-      currentIndex: 3,
+    return Scaffold(
       appBar: AppBar(title: Text(t('social.title', lang))),
       body: ListView(
         padding: const EdgeInsets.all(16),

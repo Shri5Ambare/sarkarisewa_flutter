@@ -172,80 +172,62 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Greeting
-                        Container(
-                          padding: const EdgeInsets.all(18),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(colors: [AppColors.saffron.withAlpha(38), AppColors.violet.withAlpha(20)]),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: AppColors.saffron.withAlpha(51)),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          'Namaste, ${auth.profile?['name'] ?? 'Student'}! 🙏',
-                                          style: Theme.of(context).textTheme.titleLarge,
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          t('dashboard.courses', lang),
-                                          style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const Icon(Icons.menu_book_outlined, color: AppColors.textMuted, size: 38),
-                                ],
-                              ),
-                              const SizedBox(height: 14),
-                              // Stats mini-row
-                              Row(
-                                children: [
-                                  _StatChip(icon: '🪙', label: '${auth.profile?['coins'] ?? 0}', tooltip: 'Coins'),
-                                  const SizedBox(width: 10),
-                                  _StatChip(icon: '📚', label: '${enrolled.length}', tooltip: 'Enrolled'),
-                                  const SizedBox(width: 10),
-                                  _StatChip(icon: '🔥', label: auth.tier.toUpperCase(), tooltip: 'Plan'),
-                                ],
-                              ),
-                            ],
-                          ),
+                        // ── Hero greeting ─────────────────────────────
+                        _HeroHeader(
+                          name: (auth.profile?['name'] ?? 'Student').toString(),
+                          tier: auth.tier,
+                          streak: (auth.profile?['streak'] ?? 0) as int,
+                          coins: (auth.profile?['coins'] ?? 0) as int,
+                          enrolledCount: enrolled.length,
                         ),
-                        const SizedBox(height: 16),
-                        GestureDetector(
-                          onTap: () => context.push('/battle_lobby'),
-                          child: Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(colors: [AppColors.violet, AppColors.saffron]),
-                              borderRadius: BorderRadius.circular(16),
+                        const SizedBox(height: 18),
+
+                        // ── Quick actions (Ambition Guru style) ───────
+                        _QuickActionsRow(
+                          actions: [
+                            _QuickAction(
+                              icon: Icons.article_outlined,
+                              label: 'News',
+                              color: AppColors.saffron,
+                              onTap: () => context.push('/news'),
                             ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.local_fire_department, color: Colors.white, size: 32),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: const [
-                                      Text('1v1 Battleground', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                                      Text('Challenge your friends!', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                                    ],
-                                  ),
-                                ),
-                                const Icon(Icons.chevron_right, color: Colors.white),
-                              ],
+                            _QuickAction(
+                              icon: Icons.history_edu_outlined,
+                              label: 'PYQ',
+                              color: AppColors.emerald,
+                              onTap: () => context.push('/pyq'),
                             ),
-                          ),
+                            _QuickAction(
+                              icon: Icons.edit_note,
+                              label: 'Writing',
+                              color: AppColors.sky,
+                              onTap: () => context.push('/writing'),
+                            ),
+                            _QuickAction(
+                              icon: Icons.local_fire_department,
+                              label: 'Battle',
+                              color: AppColors.ruby,
+                              onTap: () => context.push('/battle_lobby'),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 18),
+
+                        // ── Continue Learning ─────────────────────────
+                        if (enrolled.isNotEmpty) ...[
+                          _ContinueLearningCard(
+                            course: _courses.firstWhere(
+                              (c) => enrolled.contains(c['id']),
+                              orElse: () => const <String, dynamic>{},
+                            ),
+                            onTap: (course) {
+                              if (course.isNotEmpty) {
+                                context.push('/course/${course['id']}', extra: course);
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                        ],
 
                         // Search
                         TextField(
@@ -436,30 +418,238 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-class _StatChip extends StatelessWidget {
-  final String icon;
-  final String label;
-  final String tooltip;
+// ── Hero header (greeting + stats) ──────────────────────────────────────────
+class _HeroHeader extends StatelessWidget {
+  final String name;
+  final String tier;
+  final int streak;
+  final int coins;
+  final int enrolledCount;
 
-  const _StatChip({required this.icon, required this.label, required this.tooltip});
+  const _HeroHeader({
+    required this.name,
+    required this.tier,
+    required this.streak,
+    required this.coins,
+    required this.enrolledCount,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [AppColors.saffronDark, AppColors.violet],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.saffron.withAlpha(60),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Namaste 🙏',
+                      style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      name,
+                      style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.white.withAlpha(45),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  tier.toUpperCase(),
+                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.5),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(child: _HeroStat(icon: '🔥', value: '$streak', label: 'Day streak')),
+              _heroDivider(),
+              Expanded(child: _HeroStat(icon: '🪙', value: '$coins', label: 'Coins')),
+              _heroDivider(),
+              Expanded(child: _HeroStat(icon: '📚', value: '$enrolledCount', label: 'Courses')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _heroDivider() => Container(
+        height: 28,
+        width: 1,
+        color: Colors.white.withAlpha(50),
+      );
+}
+
+class _HeroStat extends StatelessWidget {
+  final String icon;
+  final String value;
+  final String label;
+  const _HeroStat({required this.icon, required this.value, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(icon, style: const TextStyle(fontSize: 18)),
+        const SizedBox(height: 4),
+        Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+      ],
+    );
+  }
+}
+
+// ── Quick actions strip ─────────────────────────────────────────────────────
+class _QuickAction {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+  const _QuickAction({required this.icon, required this.label, required this.color, required this.onTap});
+}
+
+class _QuickActionsRow extends StatelessWidget {
+  final List<_QuickAction> actions;
+  const _QuickActionsRow({required this.actions});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (var i = 0; i < actions.length; i++) ...[
+          Expanded(child: _QuickActionTile(action: actions[i])),
+          if (i != actions.length - 1) const SizedBox(width: 10),
+        ],
+      ],
+    );
+  }
+}
+
+class _QuickActionTile extends StatelessWidget {
+  final _QuickAction action;
+  const _QuickActionTile({required this.action});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: action.onTap,
+      borderRadius: BorderRadius.circular(14),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: AppColors.cardBg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: action.color.withAlpha(28),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(action.icon, color: action.color, size: 22),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              action.label,
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Continue learning band ──────────────────────────────────────────────────
+class _ContinueLearningCard extends StatelessWidget {
+  final Map<String, dynamic> course;
+  final ValueChanged<Map<String, dynamic>> onTap;
+  const _ContinueLearningCard({required this.course, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    if (course.isEmpty) return const SizedBox.shrink();
+    final title = (course['title'] ?? 'Continue Learning').toString();
+    final category = (course['category'] ?? '').toString();
+
+    return InkWell(
+      onTap: () => onTap(course),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: AppColors.navyLight,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: AppColors.border),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(icon, style: const TextStyle(fontSize: 13)),
-            const SizedBox(width: 5),
-            Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [AppColors.saffron, AppColors.violet]),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 32),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Continue learning', style: TextStyle(color: AppColors.textMuted, fontSize: 11, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text(
+                    title,
+                    style: const TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w700),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (category.isNotEmpty)
+                    Text(category, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: AppColors.textMuted),
           ],
         ),
       ),

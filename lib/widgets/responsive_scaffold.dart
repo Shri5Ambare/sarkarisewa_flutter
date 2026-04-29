@@ -27,9 +27,9 @@ class ResponsiveScaffold extends StatelessWidget {
 
     final navItems = [
       (icon: Icons.dashboard_outlined, active: Icons.dashboard, label: t('nav.home', lang), path: '/dashboard'),
-      (icon: Icons.mic_outlined, active: Icons.mic, label: t('nav.ai', lang), path: '/ai-viva'),
-      (icon: Icons.edit_outlined, active: Icons.edit, label: t('nav.writing', lang), path: '/writing'),
-      (icon: Icons.emoji_events_outlined, active: Icons.emoji_events, label: t('nav.social', lang), path: '/social'),
+      (icon: Icons.history_edu_outlined, active: Icons.history_edu, label: t('nav.pyq', lang), path: '/pyq'),
+      (icon: Icons.assignment_outlined, active: Icons.assignment, label: t('nav.mock', lang), path: '/mock'),
+      (icon: Icons.live_tv_outlined, active: Icons.live_tv, label: t('nav.live', lang), path: '/live'),
       (icon: Icons.person_outlined, active: Icons.person, label: t('nav.profile', lang), path: '/profile'),
     ];
 
@@ -85,9 +85,9 @@ class AppBottomNav extends StatelessWidget {
 
     final items = [
       (icon: Icons.dashboard_outlined, active: Icons.dashboard, label: t('nav.home', lang), path: '/dashboard'),
-      (icon: Icons.mic_outlined, active: Icons.mic, label: t('nav.ai', lang), path: '/ai-viva'),
-      (icon: Icons.edit_outlined, active: Icons.edit, label: t('nav.writing', lang), path: '/writing'),
-      (icon: Icons.emoji_events_outlined, active: Icons.emoji_events, label: t('nav.social', lang), path: '/social'),
+      (icon: Icons.history_edu_outlined, active: Icons.history_edu, label: t('nav.pyq', lang), path: '/pyq'),
+      (icon: Icons.assignment_outlined, active: Icons.assignment, label: t('nav.mock', lang), path: '/mock'),
+      (icon: Icons.live_tv_outlined, active: Icons.live_tv, label: t('nav.live', lang), path: '/live'),
       (icon: Icons.person_outlined, active: Icons.person, label: t('nav.profile', lang), path: '/profile'),
     ];
 

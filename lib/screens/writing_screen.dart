@@ -11,7 +11,6 @@ import '../providers/locale_provider.dart';
 import '../services/firestore_service.dart';
 import '../l10n/strings.dart';
 import '../theme.dart';
-import '../widgets/responsive_scaffold.dart';
 import '../widgets/app_button.dart';
 
 class WritingScreen extends StatefulWidget {
@@ -123,8 +122,7 @@ class _WritingScreenState extends State<WritingScreen> {
     final lang = context.watch<LocaleProvider>().lang;
     final hasAccess = auth.profile?['writingAccess'] == true || auth.isTeacher || auth.isAdmin;
 
-    return ResponsiveScaffold(
-      currentIndex: 2,
+    return Scaffold(
       appBar: AppBar(title: Text(t('nav.writing', lang))),
       body: !hasAccess
         ? Center(

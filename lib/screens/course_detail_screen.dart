@@ -116,6 +116,11 @@ class _CourseDetailScreenState extends State<CourseDetailScreen> with SingleTick
     final color = _parseColor(_course!['color'] ?? '#FF6B35');
     final curriculum = List<Map<String, dynamic>>.from(_course!['curriculum'] ?? []);
 
+    final totalLessons = curriculum.fold<int>(
+      0,
+      (sum, ch) => sum + ((ch['lectures'] as List?)?.length ?? 0),
+    );
+
     final isDesktop = MediaQuery.of(context).size.width >= 800;
 
     final buyBox = Padding(
@@ -263,69 +268,126 @@ class _CourseDetailScreenState extends State<CourseDetailScreen> with SingleTick
           child: TabBarView(
             controller: _tabs,
             children: [
-              // Curriculum (Udemy Style)
+              // Curriculum with chapter progress
               curriculum.isEmpty
                   ? const Center(child: Text('Curriculum coming soon.', style: TextStyle(color: AppColors.textMuted)))
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: curriculum.length,
-                      itemBuilder: (ctx, i) {
-                        final section = curriculum[i];
-                        final lectures = List<Map<String, dynamic>>.from(section['lectures'] ?? []);
-                        return Theme(
-                          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-                          child: ExpansionTile(
-                            initiallyExpanded: i == 0,
-                            title: Text(
-                              section['title'] ?? 'Section ${i + 1}',
-                              style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.textPrimary, fontSize: 14),
-                            ),
-                            subtitle: Text(
-                              '${lectures.length} lectures',
-                              style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
-                            ),
-                            iconColor: AppColors.saffron,
-                            collapsedIconColor: AppColors.textMuted,
-                            children: lectures.map((lec) {
-                              final type = lec['type'] ?? 'video';
-                              final isVideo = type == 'video';
-                              final isLive = type == 'live';
-
-                              IconData icon = Icons.article_outlined;
-                              Color iconColor = AppColors.textPrimary;
-                              
-                              if (isVideo) { icon = Icons.play_circle_fill; iconColor = AppColors.saffron; }
-                              if (isLive) { icon = Icons.videocam; iconColor = AppColors.emerald; }
-
-                              return ListTile(
-                                dense: true,
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 0),
-                                leading: Icon(icon, color: iconColor, size: 20),
-                                title: Text(lec['title'] ?? 'Lecture', style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-                                trailing: isLive && enrolled
-                                    ? TextButton(
-                                        onPressed: () async {
-                                          final url = lec['url'];
-                                          if (url != null && url.toString().isNotEmpty) {
-                                            try { await launchUrl(Uri.parse(url)); } catch (_) {}
-                                          } else {
-                                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No link provided.'), backgroundColor: AppColors.ruby, behavior: SnackBarBehavior.floating));
-                                          }
-                                        },
-                                        child: const Text('Join Live', style: TextStyle(color: AppColors.emerald, fontWeight: FontWeight.bold, fontSize: 11)),
-                                      )
-                                    : (!enrolled ? const Icon(Icons.lock_outline, size: 16, color: AppColors.textMuted) : null),
-                                onTap: enrolled ? () async {
-                                  final url = lec['url'];
-                                  if (url != null && url.toString().isNotEmpty) {
-                                    try { await launchUrl(Uri.parse(url)); } catch (_) {}
-                                  } else {
-                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No link provided.'), backgroundColor: AppColors.ruby, behavior: SnackBarBehavior.floating));
-                                  }
-                                } : null,
+                  : StreamBuilder<Set<String>>(
+                      stream: enrolled && auth.user != null
+                          ? _db.listenCourseProgress(auth.user!.uid, widget.courseId)
+                          : const Stream<Set<String>>.empty(),
+                      builder: (ctx, progSnap) {
+                        final completed = progSnap.data ?? <String>{};
+                        return ListView.builder(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          itemCount: curriculum.length + 1,
+                          itemBuilder: (ctx, listIdx) {
+                            if (listIdx == 0) {
+                              return _ProgressBand(
+                                completed: completed.length.clamp(0, totalLessons),
+                                total: totalLessons,
                               );
-                            }).toList(),
-                          ),
+                            }
+                            final i = listIdx - 1;
+                            final section = curriculum[i];
+                            final lectures = List<Map<String, dynamic>>.from(section['lectures'] ?? []);
+                            final chapterDone = lectures
+                                .asMap()
+                                .entries
+                                .where((e) => completed.contains('${i}_${e.key}'))
+                                .length;
+                            return Theme(
+                              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                              child: ExpansionTile(
+                                initiallyExpanded: i == 0,
+                                title: Text(
+                                  section['title'] ?? 'Section ${i + 1}',
+                                  style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.textPrimary, fontSize: 14),
+                                ),
+                                subtitle: Text(
+                                  '$chapterDone / ${lectures.length} complete',
+                                  style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                                ),
+                                iconColor: AppColors.saffron,
+                                collapsedIconColor: AppColors.textMuted,
+                                children: List.generate(lectures.length, (j) {
+                                  final lec = lectures[j];
+                                  final lessonId = '${i}_$j';
+                                  final isDone = completed.contains(lessonId);
+                                  final type = lec['type'] ?? 'video';
+                                  final isVideo = type == 'video';
+                                  final isLive = type == 'live';
+
+                                  IconData icon = Icons.article_outlined;
+                                  Color iconColor = AppColors.textPrimary;
+                                  if (isVideo) { icon = Icons.play_circle_fill; iconColor = AppColors.saffron; }
+                                  if (isLive) { icon = Icons.videocam; iconColor = AppColors.emerald; }
+
+                                  return ListTile(
+                                    dense: true,
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+                                    leading: enrolled
+                                        ? IconButton(
+                                            tooltip: isDone ? 'Mark incomplete' : 'Mark complete',
+                                            icon: Icon(
+                                              isDone
+                                                  ? Icons.check_circle
+                                                  : Icons.radio_button_unchecked,
+                                              color: isDone ? AppColors.emerald : AppColors.textMuted,
+                                              size: 22,
+                                            ),
+                                            onPressed: () async {
+                                              final uid = auth.user?.uid;
+                                              if (uid == null) return;
+                                              try {
+                                                if (isDone) {
+                                                  await _db.markLessonIncomplete(uid, widget.courseId, lessonId);
+                                                } else {
+                                                  await _db.markLessonComplete(uid, widget.courseId, lessonId);
+                                                }
+                                              } catch (_) {
+                                                if (context.mounted) {
+                                                  ScaffoldMessenger.of(context).showSnackBar(
+                                                    const SnackBar(content: Text('Could not update progress'), behavior: SnackBarBehavior.floating),
+                                                  );
+                                                }
+                                              }
+                                            },
+                                          )
+                                        : Icon(icon, color: iconColor, size: 20),
+                                    title: Text(
+                                      lec['title'] ?? 'Lecture',
+                                      style: TextStyle(
+                                        color: AppColors.textSecondary,
+                                        fontSize: 13,
+                                        decoration: isDone ? TextDecoration.lineThrough : TextDecoration.none,
+                                      ),
+                                    ),
+                                    trailing: isLive && enrolled
+                                        ? TextButton(
+                                            onPressed: () async {
+                                              final url = lec['url'];
+                                              if (url != null && url.toString().isNotEmpty) {
+                                                try { await launchUrl(Uri.parse(url)); } catch (_) {}
+                                              } else {
+                                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No link provided.'), backgroundColor: AppColors.ruby, behavior: SnackBarBehavior.floating));
+                                              }
+                                            },
+                                            child: const Text('Join Live', style: TextStyle(color: AppColors.emerald, fontWeight: FontWeight.bold, fontSize: 11)),
+                                          )
+                                        : (!enrolled ? const Icon(Icons.lock_outline, size: 16, color: AppColors.textMuted) : Icon(icon, color: iconColor, size: 18)),
+                                    onTap: enrolled ? () async {
+                                      final url = lec['url'];
+                                      if (url != null && url.toString().isNotEmpty) {
+                                        try { await launchUrl(Uri.parse(url)); } catch (_) {}
+                                      } else {
+                                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No link provided.'), backgroundColor: AppColors.ruby, behavior: SnackBarBehavior.floating));
+                                      }
+                                    } : null,
+                                  );
+                                }),
+                              ),
+                            );
+                          },
                         );
                       },
                     ),
@@ -432,5 +494,58 @@ class _CourseDetailScreenState extends State<CourseDetailScreen> with SingleTick
   Color _parseColor(String hex) {
     try { return Color(int.parse('FF${hex.replaceAll('#', '')}', radix: 16)); }
     catch (_) { return AppColors.saffron; }
+  }
+}
+
+class _ProgressBand extends StatelessWidget {
+  final int completed;
+  final int total;
+  const _ProgressBand({required this.completed, required this.total});
+
+  @override
+  Widget build(BuildContext context) {
+    if (total == 0) return const SizedBox.shrink();
+    final pct = completed / total;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.navyLight,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.insights, color: AppColors.saffron, size: 18),
+                const SizedBox(width: 8),
+                const Text(
+                  'Your progress',
+                  style: TextStyle(color: AppColors.textPrimary, fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+                const Spacer(),
+                Text(
+                  '${(pct * 100).round()}% • $completed / $total',
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: pct,
+                minHeight: 8,
+                backgroundColor: AppColors.border,
+                valueColor: const AlwaysStoppedAnimation<Color>(AppColors.saffron),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

@@ -504,6 +504,109 @@ class FirestoreService {
     return {'id': snap.id, ...snap.data()!};
   }
 
+  // ── LIVE CLASSES ─────────────────────────────────────────────────
+  /// Stream upcoming + currently-live classes ordered by `startAt` ascending.
+  /// May require a Firestore index on `startAt`.
+  Stream<List<Map<String, dynamic>>> listenUpcomingLiveClasses() {
+    final cutoff = DateTime.now().subtract(const Duration(hours: 3));
+    return _db
+        .collection('live_classes')
+        .where('startAt', isGreaterThan: Timestamp.fromDate(cutoff))
+        .orderBy('startAt')
+        .snapshots()
+        .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
+  }
+
+  // ── ALL MOCK TESTS (for Mock tab index screen) ───────────────────
+  Stream<List<Map<String, dynamic>>> listenAllMockTests() {
+    return _db
+        .collection('mock_tests')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
+  }
+
+  // ── COURSE PROGRESS ──────────────────────────────────────────────
+  /// Live set of lesson IDs the user has marked complete in a course.
+  /// Lesson IDs are caller-defined (we use `${chapterIdx}_${lectureIdx}`).
+  Stream<Set<String>> listenCourseProgress(String uid, String courseId) {
+    return _db
+        .collection('users')
+        .doc(uid)
+        .collection('courseProgress')
+        .doc(courseId)
+        .snapshots()
+        .map((snap) {
+      if (!snap.exists) return <String>{};
+      final list = (snap.data()?['completedLessonIds'] as List?) ?? const [];
+      return list.map((e) => e.toString()).toSet();
+    });
+  }
+
+  Future<void> markLessonComplete(String uid, String courseId, String lessonId) {
+    final ref = _db
+        .collection('users')
+        .doc(uid)
+        .collection('courseProgress')
+        .doc(courseId);
+    return ref.set({
+      'completedLessonIds': FieldValue.arrayUnion([lessonId]),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> markLessonIncomplete(String uid, String courseId, String lessonId) {
+    final ref = _db
+        .collection('users')
+        .doc(uid)
+        .collection('courseProgress')
+        .doc(courseId);
+    return ref.set({
+      'completedLessonIds': FieldValue.arrayRemove([lessonId]),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  // ── PREVIOUS YEAR QUESTIONS (PYQ) ────────────────────────────────
+  /// Live stream of PYQ papers, optionally filtered by exam.
+  Stream<List<Map<String, dynamic>>> listenPyqs({String? exam}) {
+    Query<Map<String, dynamic>> q = _db.collection('pyqs');
+    if (exam != null && exam.isNotEmpty) {
+      q = q.where('exam', isEqualTo: exam);
+    }
+    return q.snapshots().map(
+          (s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+        );
+  }
+
+  /// Get a single PYQ paper by ID. Same shape as a mock test.
+  Future<Map<String, dynamic>?> getPyqById(String id) async {
+    final snap = await _db.collection('pyqs').doc(id).get();
+    if (!snap.exists) return null;
+    return {'id': snap.id, ...snap.data()!};
+  }
+
+  /// Compute rank/percentile for a score against all submissions of a test.
+  /// Returns null when fewer than 5 prior submissions exist (signal not useful).
+  Future<({int rank, int total, int percentile})?> getMockTestRank(
+    String testId,
+    int score,
+  ) async {
+    final qs = await _db
+        .collection('mock_test_results')
+        .where('testId', isEqualTo: testId)
+        .get();
+    final scores = qs.docs
+        .map((d) => (d.data()['score'] as num?)?.toInt() ?? 0)
+        .toList();
+    if (scores.length < 5) return null;
+    final beaten = scores.where((s) => s < score).length;
+    final total = scores.length;
+    final rank = total - beaten; // 1 = best
+    final percentile = ((beaten / total) * 100).round();
+    return (rank: rank, total: total, percentile: percentile);
+  }
+
   /// Get the user's past mock test results (for profile screen)
   Future<List<Map<String, dynamic>>> getMyTestResults(String uid) async {
     final qs = await _db.collection('mock_test_results')

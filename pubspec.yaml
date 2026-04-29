@@ -29,9 +29,6 @@ dependencies:
   shared_preferences: ^2.3.2
   file_picker: ^10.3.10
   http: ^1.6.0
-  speech_to_text: ^7.3.0
-  flutter_tts: ^4.2.5
-  google_generative_ai: ^0.4.7
   cloud_functions: ^6.0.7
   firebase_app_check: ^0.4.1+5
   flutter_dotenv: ^5.1.0
