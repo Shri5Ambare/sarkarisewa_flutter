@@ -149,22 +149,14 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // 10. Viva Results
-    // Users can read their own; Admins can read all; users create their own
-    match /viva_results/{resultId} {
-      allow read: if isSignedIn() && (request.auth.uid == resource.data.uid || isAdmin());
-      allow create: if isSignedIn() && request.auth.uid == request.resource.data.uid;
-      allow update, delete: if isAdmin();
-    }
-
-    // 11. News Feed
+    // 10. News Feed
     // Anyone logged in can read; Only Teachers/Admins can write
     match /news/{newsId} {
       allow read: if isSignedIn();
       allow write: if isTeacherOrAdmin();
     }
 
-    // 12. Student Groups
+    // 11. Student Groups
     // Only Teachers/Admins can write; Members/Teacher/Admin can read
     match /groups/{groupId} {
       allow read: if isSignedIn() && (
@@ -175,7 +167,7 @@ service cloud.firestore {
       allow write: if isTeacherOrAdmin();
     }
 
-    // 13. Battles — only involved parties can read/write
+    // 12. Battles — only involved parties can read/write
     match /battles/{battleId} {
       allow read: if isSignedIn() && (
         request.auth.uid == resource.data.initiatorUid ||
@@ -190,7 +182,7 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // 14. Friend Requests — only involved parties can write
+    // 13. Friend Requests — only involved parties can write
     match /friend_requests/{reqId} {
       allow read: if isSignedIn() && (
         request.auth.uid == resource.data.fromUid ||
@@ -204,16 +196,33 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // 15. Leaderboard
+    // 14. Leaderboard
     match /leaderboard/{docId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
 
-    // 16. Activity Logs
+    // 15. Activity Logs
     match /activity_logs/{logId} {
       allow read: if isTeacherOrAdmin();
       allow create: if isSignedIn();
+    }
+
+    // 16. PYQ Papers — any signed-in user can read; teachers/admins can write
+    match /pyqs/{pyqId} {
+      allow read: if isSignedIn();
+      allow write: if isTeacherOrAdmin();
+    }
+
+    // 17. Live Classes — any signed-in user can read; teachers/admins can write
+    match /live_classes/{classId} {
+      allow read: if isSignedIn();
+      allow write: if isTeacherOrAdmin();
+    }
+
+    // 18. Course Progress — owner-only; no cross-user access
+    match /users/{userId}/courseProgress/{courseId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
     }
 
     // Default lockdown fallback
