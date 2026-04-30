@@ -436,142 +436,150 @@ class _HeroHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Design system: greeting card uses the **soft** brand gradient
+    // (`saffron @ 15% → violet @ 8%` over white) with a hairline tinted
+    // border. Text is dark — this is NOT the saturated brand surface.
     return Container(
-      padding: const EdgeInsets.fromLTRB(22, 24, 22, 20),
+      padding: const EdgeInsets.all(AppSpace.x5),
       decoration: BoxDecoration(
-        gradient: AppGradients.brand,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
-        boxShadow: AppShadows.brand,
+        gradient: AppGradients.brandSoft,
+        borderRadius: BorderRadius.circular(AppRadius.xxl),
+        border: Border.all(color: AppColors.primary.withAlpha(26), width: 1),
       ),
-      child: Stack(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Decorative ring on top-right
-          Positioned(
-            top: -40, right: -40,
-            child: Container(
-              width: 140, height: 140,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white.withAlpha(30), width: 30),
-              ),
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Row(
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Namaste 🙏',
-                          style: TextStyle(
-                            color: Colors.white.withAlpha(220),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            letterSpacing: 0.2,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          name,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.3,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withAlpha(50),
-                      borderRadius: BorderRadius.circular(AppRadius.pill),
-                      border: Border.all(color: Colors.white.withAlpha(80)),
-                    ),
-                    child: Text(
-                      tier.toUpperCase(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.6,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Namaste 🙏',
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 22),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
-                decoration: BoxDecoration(
-                  color: Colors.white.withAlpha(35),
-                  borderRadius: BorderRadius.circular(AppRadius.lg),
-                  border: Border.all(color: Colors.white.withAlpha(50)),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(child: _HeroStat(icon: '🔥', value: '$streak', label: 'Day streak')),
-                    _heroDivider(),
-                    Expanded(child: _HeroStat(icon: '🪙', value: '$coins', label: 'Coins')),
-                    _heroDivider(),
-                    Expanded(child: _HeroStat(icon: '📚', value: '$enrolledCount', label: 'Courses')),
+                    const SizedBox(height: 2),
+                    Text(
+                      name,
+                      style: Theme.of(context).textTheme.headlineMedium,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ],
                 ),
               ),
+              // Avatar circle: solid brand gradient, white initial.
+              Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                  gradient: AppGradients.brand,
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: Text(
+                    (name.isEmpty ? 'U' : name.substring(0, 1)).toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 18,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          // Stat chips — white pills with hairline border (design system
+          // "stat" component). Tier rendered separately as a tinted pill.
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _StatChip(emoji: '🔥', label: '$streak-day streak'),
+              _StatChip(emoji: '🪙', label: '$coins coins'),
+              _StatChip(emoji: '📚', label: '$enrolledCount courses'),
+              _TierChip(tier: tier),
             ],
           ),
         ],
       ),
     );
   }
-
-  Widget _heroDivider() => Container(
-        height: 32,
-        width: 1,
-        color: Colors.white.withAlpha(60),
-      );
 }
 
-class _HeroStat extends StatelessWidget {
-  final String icon;
-  final String value;
+class _StatChip extends StatelessWidget {
+  final String emoji;
   final String label;
-  const _HeroStat({required this.icon, required this.value, required this.label});
+  const _StatChip({required this.emoji, required this.label});
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(icon, style: const TextStyle(fontSize: 20)),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -0.3,
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.cardBg,
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(emoji, style: const TextStyle(fontSize: 13)),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-        ),
-        const SizedBox(height: 1),
-        Text(
-          label,
-          style: TextStyle(
-            color: Colors.white.withAlpha(200),
-            fontSize: 11,
-            fontWeight: FontWeight.w500,
+        ],
+      ),
+    );
+  }
+}
+
+class _TierChip extends StatelessWidget {
+  final String tier;
+  const _TierChip({required this.tier});
+
+  @override
+  Widget build(BuildContext context) {
+    final (emoji, label, tint) = switch (tier) {
+      'gold'   => ('🥇', 'Gold',   AppColors.gold),
+      'silver' => ('🥈', 'Silver', AppColors.sky),
+      _        => ('🆓', 'Free',   AppColors.emerald),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        // Tier badges use tinted bg + same-color border at ~30% alpha.
+        color: tint.withAlpha(31), // ~12%
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+        border: Border.all(color: tint.withAlpha(77)), // ~30%
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(emoji, style: const TextStyle(fontSize: 13)),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: tint,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -616,6 +624,8 @@ class _QuickActionTileState extends State<_QuickActionTile> {
   @override
   Widget build(BuildContext context) {
     final action = widget.action;
+    // Design-system QuickTile: left-aligned, tinted icon block (12% alpha),
+    // 14-radius card, hairline border, 600/14 label.
     return GestureDetector(
       onTapDown: (_) => setState(() => _pressed = true),
       onTapUp: (_) {
@@ -624,29 +634,25 @@ class _QuickActionTileState extends State<_QuickActionTile> {
       },
       onTapCancel: () => setState(() => _pressed = false),
       child: AnimatedScale(
-        scale: _pressed ? 0.96 : 1.0,
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOut,
+        scale: _pressed ? 0.95 : 1.0,
+        duration: const Duration(milliseconds: 130),
+        curve: Curves.easeInOut,
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 4),
+          padding: const EdgeInsets.all(AppSpace.x4),
           decoration: BoxDecoration(
             color: AppColors.cardBg,
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(color: AppColors.borderSoft),
-            boxShadow: AppShadows.sm,
+            borderRadius: BorderRadius.circular(AppRadius.xl),
+            border: Border.all(color: AppColors.border),
           ),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 46,
-                height: 46,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [action.color.withAlpha(38), action.color.withAlpha(22)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  color: action.color.withAlpha(31), // ~12% tint
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
                 ),
                 child: Icon(action.icon, color: action.color, size: 22),
               ),
@@ -654,12 +660,10 @@ class _QuickActionTileState extends State<_QuickActionTile> {
               Text(
                 action.label,
                 style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
                   color: AppColors.textPrimary,
-                  letterSpacing: -0.1,
                 ),
-                textAlign: TextAlign.center,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -672,6 +676,12 @@ class _QuickActionTileState extends State<_QuickActionTile> {
 }
 
 // ── Continue learning band ──────────────────────────────────────────────────
+//
+// Canonical CourseCard recipe from the design system:
+//   - white surface, hairline border, radius 14
+//   - 5px left-edge accent stripe in the course color
+//   - 48×48 emoji block in `accent @ 12%` tint
+//   - title + subtitle + thin progress bar
 class _ContinueLearningCard extends StatelessWidget {
   final Map<String, dynamic> course;
   final ValueChanged<Map<String, dynamic>> onTap;
@@ -680,102 +690,102 @@ class _ContinueLearningCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (course.isEmpty) return const SizedBox.shrink();
-    final title = (course['title'] ?? 'Continue Learning').toString();
+    final title    = (course['title'] ?? 'Continue Learning').toString();
     final category = (course['category'] ?? '').toString();
+    final emoji    = (course['emoji'] as String?) ?? '📚';
+    final accentHex = course['color'] as String?;
+    final accent   = _parseHex(accentHex) ?? AppColors.primary;
 
     return GestureDetector(
       onTap: () => onTap(course),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.cardBg,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
-          border: Border.all(color: AppColors.borderSoft),
-          boxShadow: AppShadows.sm,
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                gradient: AppGradients.brand,
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.primary.withAlpha(60),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppColors.cardBg,
+            border: Border.all(color: AppColors.border),
+            borderRadius: BorderRadius.circular(AppRadius.xl),
+          ),
+          child: Row(
+            children: [
+              // 5-px accent stripe.
+              Container(width: 5, height: 64, color: accent),
+              const SizedBox(width: 12),
+              // Emoji block.
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: accent.withAlpha(31), // ~12%
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
+                ),
+                child: Center(
+                  child: Text(emoji, style: const TextStyle(fontSize: 22)),
+                ),
               ),
-              child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 32),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+              const SizedBox(width: 12),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withAlpha(28),
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                        ),
-                        child: const Text(
-                          'CONTINUE',
-                          style: TextStyle(
-                            color: AppColors.primary,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.6,
-                          ),
+                      Text(
+                        'Continue Learning',
+                        style: TextStyle(
+                          color: accent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.4,
                         ),
                       ),
+                      const SizedBox(height: 2),
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (category.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          category,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ],
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: AppColors.textPrimary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.1,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  if (category.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      category,
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ],
+                ),
               ),
-            ),
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: AppColors.navyLight,
-                shape: BoxShape.circle,
+              const Padding(
+                padding: EdgeInsets.only(right: 12),
+                child: Icon(
+                  Icons.chevron_right,
+                  color: AppColors.textMuted,
+                  size: 22,
+                ),
               ),
-              child: const Icon(
-                Icons.arrow_forward_rounded,
-                color: AppColors.primary,
-                size: 18,
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  Color? _parseHex(String? hex) {
+    if (hex == null || hex.isEmpty) return null;
+    var s = hex.replaceAll('#', '');
+    if (s.length == 6) s = 'FF$s';
+    final v = int.tryParse(s, radix: 16);
+    return v == null ? null : Color(v);
   }
 }

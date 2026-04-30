@@ -91,21 +91,16 @@ class AppBottomNav extends StatelessWidget {
       (icon: Icons.person_outlined, active: Icons.person, label: t('nav.profile', lang), path: '/profile'),
     ];
 
+    // Design-system bottom-nav: white surface, hairline top border, NO
+    // drop shadow. Active tab = primary @ 8.6% tinted pill, radius 14.
     return Container(
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         color: AppColors.navyMid,
-        border: const Border(top: BorderSide(color: AppColors.borderSoft, width: 1)),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF0F172A).withAlpha(12),
-            blurRadius: 24,
-            offset: const Offset(0, -4),
-          ),
-        ],
+        border: Border(top: BorderSide(color: AppColors.border, width: 1)),
       ),
       child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           child: Row(
             children: List.generate(items.length, (i) {
               final item = items[i];
@@ -156,7 +151,11 @@ class _NavItemState extends State<_NavItem> with SingleTickerProviderStateMixin 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 140));
+    // Design-system spec: nav-item press scale 1.0 → 0.82 over 140ms.
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 140),
+    );
     _scale = Tween<double>(begin: 1.0, end: 0.82).animate(
       CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
     );
@@ -174,20 +173,14 @@ class _NavItemState extends State<_NavItem> with SingleTickerProviderStateMixin 
       child: ScaleTransition(
         scale: _scale,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 240),
-          curve: Curves.easeOutCubic,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeInOut,
           margin: const EdgeInsets.symmetric(horizontal: 2),
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
           decoration: BoxDecoration(
-            gradient: widget.isActive
-                ? LinearGradient(
-                    colors: [
-                      AppColors.primary.withAlpha(22),
-                      AppColors.violet.withAlpha(18),
-                    ],
-                  )
-                : null,
-            borderRadius: BorderRadius.circular(AppRadius.md),
+            // Active pill: primary @ 8.6% alpha, radius 14 (design spec).
+            color: widget.isActive ? AppColors.primary.withAlpha(22) : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadius.xl),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -211,11 +204,10 @@ class _NavItemState extends State<_NavItem> with SingleTickerProviderStateMixin 
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight:
-                      widget.isActive ? FontWeight.w700 : FontWeight.w500,
+                      widget.isActive ? FontWeight.w700 : FontWeight.w400,
                   color: widget.isActive
                       ? AppColors.primary
                       : AppColors.textMuted,
-                  letterSpacing: 0.1,
                 ),
                 child: Text(widget.label),
               ),

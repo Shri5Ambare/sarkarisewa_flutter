@@ -48,10 +48,19 @@ class _AppButtonState extends State<AppButton> with SingleTickerProviderStateMix
   @override
   void dispose() { _ctrl.dispose(); super.dispose(); }
 
+  // Design-system recipe:
+  //   .primary   { bg:#5624D0; fg:white; shadow:cta; radius:12 }
+  //   .secondary { bg:#F7F9FA; fg:#1C1D1F; }
+  //   .gold      { bg:#E59819; fg:white; }
+  //   .danger    { bg:#EF4444; fg:white; }
+  //   .success   { bg:#10B981; fg:white; }
+  //   .outline   { bg:transparent; fg:#5624D0; border:1.5 #5624D0 }
+  // Primary uses the SOLID brand color (no gradient on the button surface);
+  // gradients are reserved for the splash mark and dashboard avatar.
   ({Color bg, Color fg, Border? border, Gradient? gradient}) _stylePack(AppButtonStyle s) {
     switch (s) {
       case AppButtonStyle.primary:
-        return (bg: AppColors.primary, fg: Colors.white, border: null, gradient: AppGradients.brand);
+        return (bg: AppColors.primary, fg: Colors.white, border: null, gradient: null);
       case AppButtonStyle.secondary:
         return (bg: AppColors.navyLight, fg: AppColors.textPrimary,
                 border: Border.all(color: AppColors.border), gradient: null);
@@ -111,8 +120,6 @@ class _AppButtonState extends State<AppButton> with SingleTickerProviderStateMix
             ],
           );
 
-    final useGradient = widget.style == AppButtonStyle.primary && !isDisabled;
-
     Widget btn = GestureDetector(
       onTapDown: isDisabled ? null : (_) => _ctrl.forward(),
       onTapUp: isDisabled ? null : (_) {
@@ -125,22 +132,20 @@ class _AppButtonState extends State<AppButton> with SingleTickerProviderStateMix
         scale: _scale,
         child: AnimatedOpacity(
           duration: const Duration(milliseconds: 200),
-          opacity: isDisabled && !widget.loading ? 0.5 : 1.0,
+          // Disabled opacity 0.55 per design-system spec.
+          opacity: isDisabled && !widget.loading ? 0.55 : 1.0,
           child: Container(
             padding: EdgeInsets.symmetric(horizontal: z.padH, vertical: z.padV),
             decoration: BoxDecoration(
-              color: useGradient ? null : s.bg,
-              gradient: useGradient ? s.gradient : null,
-              borderRadius: BorderRadius.circular(AppRadius.md),
+              color: s.bg,
+              gradient: s.gradient,
+              // Buttons use radius 12 (--radius-lg).
+              borderRadius: BorderRadius.circular(AppRadius.lg),
               border: s.border,
+              // ONLY the primary CTA casts a shadow.
               boxShadow: (!isDisabled && widget.style == AppButtonStyle.primary)
                   ? AppShadows.brand
-                  : (!isDisabled &&
-                          (widget.style == AppButtonStyle.gold ||
-                           widget.style == AppButtonStyle.success ||
-                           widget.style == AppButtonStyle.danger))
-                      ? AppShadows.sm
-                      : [],
+                  : const [],
             ),
             child: Center(child: child),
           ),
