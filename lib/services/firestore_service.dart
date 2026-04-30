@@ -767,63 +767,117 @@ class FirestoreService {
   }
 
   // ── BATTLE SYSTEM ───────────────────────────────────────────────────
+  //
+  // Status lifecycle:
+  //   `pending`    — battle created, initiator hasn't submitted yet (very brief)
+  //   `active`     — initiator submitted, opponent's turn to play
+  //   `completed`  — both submitted; Cloud Function `onBattleCompleted` then
+  //                  computes the winner and awards coins/badges atomically
+  //
+  // We persist `totalQuestions` at creation time so the UI never has to
+  // fetch the test doc separately just to render "X / Y".
 
-  /// Issue a new asynchronous battle challenge to a friend
-  Future<String> createBattle(String initiatorUid, String opponentUid, String courseId, String testId, Map<String, dynamic> testInfo) async {
+  /// Issue a new asynchronous battle challenge to a friend.
+  Future<String> createBattle(
+    String initiatorUid,
+    String opponentUid,
+    String courseId,
+    String testId,
+    Map<String, dynamic> testInfo,
+  ) async {
+    final qList = (testInfo['questions'] as List?) ?? const [];
     final docRef = await _db.collection('battles').add({
-      'initiatorUid': initiatorUid,
-      'opponentUid': opponentUid,
-      'courseId': courseId,
-      'testId': testId,
-      'testTitle': testInfo['title'] ?? 'Mock Test',
-      'courseTitle': testInfo['courseTitle'] ?? 'Course',
-      'status': 'pending', // pending -> active -> completed
+      'initiatorUid':   initiatorUid,
+      'opponentUid':    opponentUid,
+      'courseId':       courseId,
+      'testId':         testId,
+      'testTitle':      testInfo['title'] ?? 'Mock Test',
+      'courseTitle':    testInfo['courseTitle'] ?? 'Course',
+      'totalQuestions': qList.length,
+      'status':         'pending',
       'initiatorScore': null,
-      'opponentScore': null,
-      'createdAt': FieldValue.serverTimestamp(),
+      'opponentScore':  null,
+      'winnerUid':      null,        // populated by Cloud Function
+      'createdAt':      FieldValue.serverTimestamp(),
     });
     return docRef.id;
   }
 
-  /// Listen to pending incoming battle challenges for a user
+  /// Battles awaiting the user's response — the initiator has played, now
+  /// it's the opponent's turn. We use `status == 'active'` because that's
+  /// the state where opponent action is required.
   Stream<List<Map<String, dynamic>>> listenIncomingBattles(String uid) {
     return _db.collection('battles')
         .where('opponentUid', isEqualTo: uid)
-        .where('status', isEqualTo: 'pending')
+        .where('status', isEqualTo: 'active')
         .snapshots()
         .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
   }
-  
-  /// Listen to active battles where the user has challenged someone and is waiting for them
+
+  /// Battles where the current user has already played and is waiting for
+  /// the opponent to respond.
   Stream<List<Map<String, dynamic>>> listenMyActiveChallenges(String uid) {
     return _db.collection('battles')
         .where('initiatorUid', isEqualTo: uid)
-        .where('status', isEqualTo: 'active') // meaning I took it, now waiting for opponent
+        .where('status', isEqualTo: 'active')
         .snapshots()
         .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
   }
 
-  /// Submit my score for a battle. 
-  /// If I am the initiator, status becomes 'active' (waiting for opponent).
-  /// If I am the opponent, status becomes 'completed'.
+  /// Recently completed battles for either player (last 20).
+  /// Used to surface results once the match is decided.
+  Stream<List<Map<String, dynamic>>> listenCompletedBattles(String uid) {
+    final asInitiator = _db.collection('battles')
+        .where('initiatorUid', isEqualTo: uid)
+        .where('status', isEqualTo: 'completed')
+        .snapshots();
+    final asOpponent = _db.collection('battles')
+        .where('opponentUid', isEqualTo: uid)
+        .where('status', isEqualTo: 'completed')
+        .snapshots();
+    // Merge both streams; opponent dedup by id.
+    return asInitiator.asyncMap((snap) async {
+      final list = snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+      final opp = await asOpponent.first;
+      for (final d in opp.docs) {
+        if (!list.any((b) => b['id'] == d.id)) {
+          list.add({'id': d.id, ...d.data()});
+        }
+      }
+      list.sort((a, b) {
+        final ta = a['createdAt'] as Timestamp?;
+        final tb = b['createdAt'] as Timestamp?;
+        if (ta == null || tb == null) return 0;
+        return tb.compareTo(ta);
+      });
+      return list.take(20).toList();
+    });
+  }
+
+  /// Submit my score for a battle.
+  /// - Initiator submits first → status: pending → active.
+  /// - Opponent submits second → status: active → completed.
+  ///   The Cloud Function `onBattleCompleted` then determines the winner
+  ///   and awards coins/badges atomically. The client never writes
+  ///   `winnerUid` directly.
   Future<void> submitBattleScore(String battleId, String uid, int score) async {
     final doc = await _db.collection('battles').doc(battleId).get();
     if (!doc.exists) return;
-
     final data = doc.data()!;
-    String roleField = (data['initiatorUid'] == uid) ? 'initiatorScore' : 'opponentScore';
-    
-    // Determine new status
+
+    final isInitiator = data['initiatorUid'] == uid;
+    final roleField = isInitiator ? 'initiatorScore' : 'opponentScore';
+
     String newStatus = data['status'];
-    if (data['initiatorUid'] == uid && data['status'] == 'pending') {
-      newStatus = 'active'; // Initiator played, now opponent needs to play
-    } else if (data['opponentUid'] == uid && data['status'] == 'active') {
-      newStatus = 'completed'; // Opponent played, match over.
+    if (isInitiator && data['status'] == 'pending') {
+      newStatus = 'active';
+    } else if (!isInitiator && data['status'] == 'active') {
+      newStatus = 'completed';
     }
 
     await _db.collection('battles').doc(battleId).update({
       roleField: score,
-      'status': newStatus,
+      'status':  newStatus,
     });
   }
 

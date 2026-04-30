@@ -195,7 +195,8 @@ class _DashboardTab extends StatelessWidget {
                       setLocalState(() => sending = true);
                       try {
                         // Securely send push via Cloud Function (no keys in frontend)
-                        final callable = FirebaseFunctions.instance.httpsCallable('sendPushNotification');
+                        final callable = FirebaseFunctions.instanceFor(region: 'asia-south1')
+                            .httpsCallable('sendPushNotification');
                         await callable.call({
                           'title': titleCtrl.text.trim(),
                           'body': bodyCtrl.text.trim(),

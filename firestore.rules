@@ -172,18 +172,32 @@ service cloud.firestore {
       allow write: if isTeacherOrAdmin();
     }
 
-    // 12. Battles — only involved parties can read/write
+    // 12. Battles — only involved parties can read/write.
+    // Server-controlled fields (winnerUid, isTie, completedAt) cannot be
+    // mutated by the client — the `onBattleCompleted` Cloud Function owns
+    // them. Clients can only update score fields and the status transition.
     match /battles/{battleId} {
       allow read: if isSignedIn() && (
         request.auth.uid == resource.data.initiatorUid ||
         request.auth.uid == resource.data.opponentUid ||
         isAdmin()
       );
-      allow create: if isSignedIn();
+      allow create: if isSignedIn() &&
+        request.auth.uid == request.resource.data.initiatorUid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.winnerUid == null &&
+        request.resource.data.initiatorScore == null &&
+        request.resource.data.opponentScore == null;
       allow update: if isSignedIn() && (
         request.auth.uid == resource.data.initiatorUid ||
         request.auth.uid == resource.data.opponentUid
-      );
+      ) &&
+        // Server-only fields cannot be touched by clients.
+        request.resource.data.winnerUid   == resource.data.winnerUid &&
+        (!('isTie' in request.resource.data) ||
+          request.resource.data.isTie == resource.data.get('isTie', false)) &&
+        (!('completedAt' in request.resource.data) ||
+          request.resource.data.completedAt == resource.data.get('completedAt', null));
       allow delete: if isAdmin();
     }
 
