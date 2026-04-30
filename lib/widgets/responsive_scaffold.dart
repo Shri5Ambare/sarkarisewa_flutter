@@ -92,13 +92,20 @@ class AppBottomNav extends StatelessWidget {
     ];
 
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.navyMid,
-        border: Border(top: BorderSide(color: AppColors.border)),
+        border: const Border(top: BorderSide(color: AppColors.borderSoft, width: 1)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0F172A).withAlpha(12),
+            blurRadius: 24,
+            offset: const Offset(0, -4),
+          ),
+        ],
       ),
       child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           child: Row(
             children: List.generate(items.length, (i) {
               final item = items[i];
@@ -167,24 +174,34 @@ class _NavItemState extends State<_NavItem> with SingleTickerProviderStateMixin 
       child: ScaleTransition(
         scale: _scale,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeInOut,
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
           margin: const EdgeInsets.symmetric(horizontal: 2),
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
           decoration: BoxDecoration(
-            color: widget.isActive ? AppColors.saffron.withAlpha(22) : Colors.transparent,
-            borderRadius: BorderRadius.circular(14),
+            gradient: widget.isActive
+                ? LinearGradient(
+                    colors: [
+                      AppColors.primary.withAlpha(22),
+                      AppColors.violet.withAlpha(18),
+                    ],
+                  )
+                : null,
+            borderRadius: BorderRadius.circular(AppRadius.md),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 200),
-                transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
+                transitionBuilder: (child, anim) =>
+                    ScaleTransition(scale: anim, child: child),
                 child: Icon(
                   widget.isActive ? widget.activeIcon : widget.icon,
                   key: ValueKey(widget.isActive),
-                  color: widget.isActive ? AppColors.saffron : AppColors.textMuted,
+                  color: widget.isActive
+                      ? AppColors.primary
+                      : AppColors.textMuted,
                   size: 22,
                 ),
               ),
@@ -193,8 +210,12 @@ class _NavItemState extends State<_NavItem> with SingleTickerProviderStateMixin 
                 duration: const Duration(milliseconds: 200),
                 style: TextStyle(
                   fontSize: 10,
-                  fontWeight: widget.isActive ? FontWeight.w700 : FontWeight.w400,
-                  color: widget.isActive ? AppColors.saffron : AppColors.textMuted,
+                  fontWeight:
+                      widget.isActive ? FontWeight.w700 : FontWeight.w500,
+                  color: widget.isActive
+                      ? AppColors.primary
+                      : AppColors.textMuted,
+                  letterSpacing: 0.1,
                 ),
                 child: Text(widget.label),
               ),

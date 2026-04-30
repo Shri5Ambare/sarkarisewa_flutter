@@ -437,66 +437,95 @@ class _HeroHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
+      padding: const EdgeInsets.fromLTRB(22, 24, 22, 20),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppColors.saffronDark, AppColors.violet],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.saffron.withAlpha(60),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        gradient: AppGradients.brand,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        boxShadow: AppShadows.brand,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          Row(
+          // Decorative ring on top-right
+          Positioned(
+            top: -40, right: -40,
+            child: Container(
+              width: 140, height: 140,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white.withAlpha(30), width: 30),
+              ),
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Namaste 🙏',
+                          style: TextStyle(
+                            color: Colors.white.withAlpha(220),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.3,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withAlpha(50),
+                      borderRadius: BorderRadius.circular(AppRadius.pill),
+                      border: Border.all(color: Colors.white.withAlpha(80)),
+                    ),
+                    child: Text(
+                      tier.toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 22),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
+                decoration: BoxDecoration(
+                  color: Colors.white.withAlpha(35),
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
+                  border: Border.all(color: Colors.white.withAlpha(50)),
+                ),
+                child: Row(
                   children: [
-                    const Text(
-                      'Namaste 🙏',
-                      style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      name,
-                      style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    Expanded(child: _HeroStat(icon: '🔥', value: '$streak', label: 'Day streak')),
+                    _heroDivider(),
+                    Expanded(child: _HeroStat(icon: '🪙', value: '$coins', label: 'Coins')),
+                    _heroDivider(),
+                    Expanded(child: _HeroStat(icon: '📚', value: '$enrolledCount', label: 'Courses')),
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Colors.white.withAlpha(45),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  tier.toUpperCase(),
-                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.5),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          Row(
-            children: [
-              Expanded(child: _HeroStat(icon: '🔥', value: '$streak', label: 'Day streak')),
-              _heroDivider(),
-              Expanded(child: _HeroStat(icon: '🪙', value: '$coins', label: 'Coins')),
-              _heroDivider(),
-              Expanded(child: _HeroStat(icon: '📚', value: '$enrolledCount', label: 'Courses')),
             ],
           ),
         ],
@@ -505,9 +534,9 @@ class _HeroHeader extends StatelessWidget {
   }
 
   Widget _heroDivider() => Container(
-        height: 28,
+        height: 32,
         width: 1,
-        color: Colors.white.withAlpha(50),
+        color: Colors.white.withAlpha(60),
       );
 }
 
@@ -520,11 +549,28 @@ class _HeroStat extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Text(icon, style: const TextStyle(fontSize: 18)),
+        Text(icon, style: const TextStyle(fontSize: 20)),
         const SizedBox(height: 4),
-        Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
-        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.3,
+          ),
+        ),
+        const SizedBox(height: 1),
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withAlpha(200),
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
       ],
     );
   }
@@ -556,42 +602,69 @@ class _QuickActionsRow extends StatelessWidget {
   }
 }
 
-class _QuickActionTile extends StatelessWidget {
+class _QuickActionTile extends StatefulWidget {
   final _QuickAction action;
   const _QuickActionTile({required this.action});
 
   @override
+  State<_QuickActionTile> createState() => _QuickActionTileState();
+}
+
+class _QuickActionTileState extends State<_QuickActionTile> {
+  bool _pressed = false;
+
+  @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: action.onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          color: AppColors.cardBg,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Column(
-          children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: action.color.withAlpha(28),
-                borderRadius: BorderRadius.circular(12),
+    final action = widget.action;
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) {
+        setState(() => _pressed = false);
+        action.onTap();
+      },
+      onTapCancel: () => setState(() => _pressed = false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.96 : 1.0,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 4),
+          decoration: BoxDecoration(
+            color: AppColors.cardBg,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(color: AppColors.borderSoft),
+            boxShadow: AppShadows.sm,
+          ),
+          child: Column(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [action.color.withAlpha(38), action.color.withAlpha(22)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+                child: Icon(action.icon, color: action.color, size: 22),
               ),
-              child: Icon(action.icon, color: action.color, size: 22),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              action.label,
-              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
+              const SizedBox(height: 10),
+              Text(
+                action.label,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                  letterSpacing: -0.1,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -610,24 +683,31 @@ class _ContinueLearningCard extends StatelessWidget {
     final title = (course['title'] ?? 'Continue Learning').toString();
     final category = (course['category'] ?? '').toString();
 
-    return InkWell(
+    return GestureDetector(
       onTap: () => onTap(course),
-      borderRadius: BorderRadius.circular(16),
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: AppColors.navyLight,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.border),
+          color: AppColors.cardBg,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+          border: Border.all(color: AppColors.borderSoft),
+          boxShadow: AppShadows.sm,
         ),
         child: Row(
           children: [
             Container(
-              width: 52,
-              height: 52,
+              width: 56,
+              height: 56,
               decoration: BoxDecoration(
-                gradient: const LinearGradient(colors: [AppColors.saffron, AppColors.violet]),
-                borderRadius: BorderRadius.circular(12),
+                gradient: AppGradients.brand,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withAlpha(60),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
               child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 32),
             ),
@@ -636,20 +716,63 @@ class _ContinueLearningCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Continue learning', style: TextStyle(color: AppColors.textMuted, fontSize: 11, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withAlpha(28),
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                        ),
+                        child: const Text(
+                          'CONTINUE',
+                          style: TextStyle(
+                            color: AppColors.primary,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.6,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
                   Text(
                     title,
-                    style: const TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.1,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  if (category.isNotEmpty)
-                    Text(category, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                  if (category.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      category,
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, color: AppColors.textMuted),
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppColors.navyLight,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.arrow_forward_rounded,
+                color: AppColors.primary,
+                size: 18,
+              ),
+            ),
           ],
         ),
       ),
