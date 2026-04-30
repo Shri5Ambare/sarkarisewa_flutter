@@ -73,15 +73,20 @@ service cloud.firestore {
       ) || (
         isSignedIn() &&
         request.auth.uid == userId &&
-        // Fixed: Ensure only allowed fields are changed
+        // Whitelist of fields a user is allowed to mutate on their own doc.
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['name', 'email', 'fcmToken', 'coins', 'enrolledCourses', 'lastEnrolledCourseId', 'friends']) &&
-        // Constrain sensitive field changes
+          .hasOnly([
+            'name', 'email', 'qualification', 'fcmToken',
+            'coins', 'enrolledCourses', 'lastEnrolledCourseId', 'friends',
+            'streak', 'longestStreak', 'lastActiveAt',
+            'badges', 'points'
+          ]) &&
+        // Server-controlled fields cannot be tampered with by the client.
         request.resource.data.role == resource.data.role &&
         request.resource.data.tier == resource.data.tier &&
         request.resource.data.writingAccess == resource.data.writingAccess &&
         request.resource.data.groupAccess == resource.data.groupAccess &&
-        // Validate coin spend if coins change
+        // Validate coin spend if coins change.
         (request.resource.data.coins == resource.data.coins || isValidCoinSpend(request, resource))
       );
       allow delete: if isAdmin();

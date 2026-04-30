@@ -40,7 +40,7 @@ class _NewsScreenState extends State<NewsScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    final enrolled = List<String>.from(auth.profile?['enrolled'] ?? []);
+    final enrolled = List<String>.from(auth.profile?['enrolledCourses'] ?? []);
 
     return Scaffold(
       appBar: AppBar(

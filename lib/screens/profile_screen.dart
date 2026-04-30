@@ -103,7 +103,7 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
     final lang = context.watch<LocaleProvider>().lang;
     _initFields(auth.profile);
 
-    final enrolled = List<String>.from(auth.profile?['enrolled'] ?? []);
+    final enrolled = List<String>.from(auth.profile?['enrolledCourses'] ?? []);
 
     return ResponsiveScaffold(
       currentIndex: 4,

@@ -92,7 +92,7 @@ class _CourseDetailScreenState extends State<CourseDetailScreen> with SingleTick
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    final enrolled = List<String>.from(auth.profile?['enrolled'] ?? []).contains(widget.courseId);
+    final enrolled = List<String>.from(auth.profile?['enrolledCourses'] ?? []).contains(widget.courseId);
 
     if (_loading) return const Scaffold(body: Center(child: CircularProgressIndicator(color: AppColors.saffron)));
     if (_error != null) {

@@ -126,7 +126,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final lang = context.watch<LocaleProvider>().lang;
-    final enrolled = List<String>.from(auth.profile?['enrolled'] ?? []);
+    final enrolled = List<String>.from(auth.profile?['enrolledCourses'] ?? []);
 
     return ResponsiveScaffold(
       currentIndex: 0,

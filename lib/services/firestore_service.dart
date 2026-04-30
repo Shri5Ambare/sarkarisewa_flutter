@@ -89,10 +89,13 @@ class FirestoreService {
       final snap = await txn.get(userRef);
       txn.update(orderRef, {'status': 'active'});
       if (snap.exists) {
-        final enrolled = List<String>.from(snap.data()!['enrolled'] ?? []);
+        final enrolled = List<String>.from(snap.data()!['enrolledCourses'] ?? []);
         if (!enrolled.contains(courseId)) {
           enrolled.add(courseId);
-          txn.update(userRef, {'enrolled': enrolled});
+          txn.update(userRef, {
+            'enrolledCourses': enrolled,
+            'lastEnrolledCourseId': courseId,
+          });
         }
       }
     });
@@ -252,18 +255,6 @@ class FirestoreService {
       'tests':        results[0].docs.map((d) => {'id': d.id, ...d.data()}).toList(),
       'transactions': results[1].docs.map((d) => {'id': d.id, ...d.data()}).toList(),
     };
-  }
-
-  /// Save the final AI Viva session result.
-  Future<void> saveVivaResult(String uid, int courseId, int score, String feedback, {Map<String, double>? location}) async {
-    await _db.collection('viva_results').doc().set({
-      'uid': uid,
-      'courseId': courseId,
-      'score': score,
-      'feedback': feedback,
-      'location': location,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
   }
 
   // ── SETTINGS ───────────────────────────────────────────────────────

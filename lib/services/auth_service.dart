@@ -1,4 +1,5 @@
 // lib/services/auth_service.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firestore_service.dart';
 
@@ -26,8 +27,15 @@ class AuthService {
       'tier': 'free',
       'writingAccess': false,
       'groupAccess': false,
-      'enrolled': [],
+      'enrolledCourses': <String>[],
+      'badges': <String>[],
+      'friends': <String>[],
+      'coins': 0,
+      'points': 0,
+      'streak': 0,
+      'longestStreak': 0,
       'joinDate': DateTime.now().toIso8601String().split('T')[0],
+      'createdAt': FieldValue.serverTimestamp(),
     });
     return cred;
   }
