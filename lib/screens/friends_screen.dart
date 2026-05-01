@@ -208,6 +208,7 @@ class _FriendRequestTile extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton(
+                  tooltip: 'Accept friend request',
                   icon: const Icon(Icons.check_circle, color: AppColors.emerald),
                   onPressed: () async {
                     await db.acceptFriendRequest(request['id'], request['fromUid'], currentUserUid);
@@ -215,6 +216,7 @@ class _FriendRequestTile extends StatelessWidget {
                   },
                 ),
                 IconButton(
+                  tooltip: 'Reject friend request',
                   icon: const Icon(Icons.cancel, color: AppColors.ruby),
                   onPressed: () => db.rejectFriendRequest(request['id']),
                 ),

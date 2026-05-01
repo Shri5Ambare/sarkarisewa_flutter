@@ -120,34 +120,43 @@ class _AppButtonState extends State<AppButton> with SingleTickerProviderStateMix
             ],
           );
 
-    Widget btn = GestureDetector(
-      onTapDown: isDisabled ? null : (_) => _ctrl.forward(),
-      onTapUp: isDisabled ? null : (_) {
-        _ctrl.reverse();
-        HapticFeedback.lightImpact();
-        widget.onPressed?.call();
-      },
-      onTapCancel: () => _ctrl.reverse(),
-      child: ScaleTransition(
-        scale: _scale,
-        child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 200),
-          // Disabled opacity 0.55 per design-system spec.
-          opacity: isDisabled && !widget.loading ? 0.55 : 1.0,
-          child: Container(
-            padding: EdgeInsets.symmetric(horizontal: z.padH, vertical: z.padV),
-            decoration: BoxDecoration(
-              color: s.bg,
-              gradient: s.gradient,
-              // Buttons use radius 12 (--radius-lg).
-              borderRadius: BorderRadius.circular(AppRadius.lg),
-              border: s.border,
-              // ONLY the primary CTA casts a shadow.
-              boxShadow: (!isDisabled && widget.style == AppButtonStyle.primary)
-                  ? AppShadows.brand
-                  : const [],
+    Widget btn = Semantics(
+      button: true,
+      enabled: !isDisabled,
+      label: widget.label,
+      child: GestureDetector(
+        onTapDown: isDisabled ? null : (_) => _ctrl.forward(),
+        onTapUp: isDisabled ? null : (_) {
+          _ctrl.reverse();
+          HapticFeedback.lightImpact();
+          widget.onPressed?.call();
+        },
+        onTapCancel: () => _ctrl.reverse(),
+        child: ScaleTransition(
+          scale: _scale,
+          child: AnimatedOpacity(
+            duration: const Duration(milliseconds: 200),
+            // Disabled opacity 0.55 per design-system spec.
+            opacity: isDisabled && !widget.loading ? 0.55 : 1.0,
+            child: ConstrainedBox(
+              // Accessibility: minimum 48dp tap target (Material/iOS spec).
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: z.padH, vertical: z.padV),
+                decoration: BoxDecoration(
+                  color: s.bg,
+                  gradient: s.gradient,
+                  // Buttons use radius 12 (--radius-lg).
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
+                  border: s.border,
+                  // ONLY the primary CTA casts a shadow.
+                  boxShadow: (!isDisabled && widget.style == AppButtonStyle.primary)
+                      ? AppShadows.brand
+                      : const [],
+                ),
+                child: Center(child: child),
+              ),
             ),
-            child: Center(child: child),
           ),
         ),
       ),

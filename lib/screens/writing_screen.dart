@@ -250,6 +250,7 @@ class _WritingScreenState extends State<WritingScreen> {
                                   ),
                                 ),
                                 IconButton(
+                                  tooltip: 'Remove file',
                                   icon: const Icon(Icons.close, color: AppColors.textMuted, size: 16),
                                   onPressed: () => setState(() => _pickedFile = null),
                                 ),

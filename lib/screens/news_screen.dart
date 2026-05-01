@@ -7,6 +7,7 @@ import '../providers/auth_provider.dart';
 import '../services/firestore_service.dart';
 import '../theme.dart';
 import '../widgets/shimmer_loader.dart';
+import '../widgets/empty_state.dart';
 
 class NewsScreen extends StatefulWidget {
   const NewsScreen({super.key});
@@ -80,32 +81,29 @@ class _NewsScreenState extends State<NewsScreen> {
           }
           final newsList = snapshot.data ?? [];
           if (newsList.isEmpty) {
-            return const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text('📭', style: TextStyle(fontSize: 48)),
-                  SizedBox(height: 16),
-                  Text('No updates available at the moment.', style: TextStyle(color: AppColors.textMuted)),
-                ],
-              ),
+            return const EmptyState(
+              emoji: '🗞',
+              title: 'No updates yet',
+              message: 'Check back later for the latest current affairs and exam announcements.',
             );
           }
 
           return ListView.separated(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppSpace.x4),
             itemCount: newsList.length,
-            separatorBuilder: (context, index) => const SizedBox(height: 20),
+            separatorBuilder: (context, index) => const SizedBox(height: AppSpace.x3),
             itemBuilder: (context, index) {
-              final news = newsList[index];
-              final hasImage = news['imageUrl'] != null && news['imageUrl'].toString().isNotEmpty;
-              final hasSource = news['source'] != null && news['source'].toString().isNotEmpty;
+              final news      = newsList[index];
+              final hasImage  = (news['imageUrl']  ?? '').toString().isNotEmpty;
+              final hasSource = (news['source']    ?? '').toString().isNotEmpty;
 
+              // Canonical card recipe: white surface, hairline border,
+              // radius 16, no shadow.
               return Container(
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: AppColors.cardBg,
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(AppRadius.xxl),
                   border: Border.all(color: AppColors.border),
                 ),
                 child: Column(
@@ -119,29 +117,34 @@ class _NewsScreenState extends State<NewsScreen> {
                         errorBuilder: (context, error, stackTrace) => const SizedBox(),
                       ),
                     Padding(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(AppSpace.x4),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             _formatDate(news['createdAt']),
-                            style: const TextStyle(color: AppColors.saffron, fontSize: 12, fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                              color: AppColors.primary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.4,
+                            ),
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: AppSpace.x2),
                           Text(
                             news['title'] ?? 'Headline',
-                            style: const TextStyle(color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.bold, height: 1.3),
+                            style: Theme.of(context).textTheme.headlineSmall,
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: AppSpace.x3),
                           Text(
                             news['summary'] ?? '',
-                            style: const TextStyle(color: AppColors.textSecondary, fontSize: 14, height: 1.5),
+                            style: Theme.of(context).textTheme.bodyMedium,
                           ),
                           if (hasSource) ...[
-                            const SizedBox(height: 16),
+                            const SizedBox(height: AppSpace.x4),
                             InkWell(
                               onTap: () => _launchUrl(news['source']),
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(AppRadius.sm),
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(vertical: 8),
                                 child: Row(
@@ -149,7 +152,14 @@ class _NewsScreenState extends State<NewsScreen> {
                                   children: [
                                     const Icon(Icons.link, color: AppColors.sky, size: 16),
                                     const SizedBox(width: 8),
-                                    Text('Read full article', style: const TextStyle(color: AppColors.sky, fontSize: 13, fontWeight: FontWeight.w600)),
+                                    const Text(
+                                      'Read full article',
+                                      style: TextStyle(
+                                        color: AppColors.sky,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),

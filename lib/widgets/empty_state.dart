@@ -47,49 +47,59 @@ class EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: padding,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 88,
-              height: 88,
-              decoration: BoxDecoration(
-                color: AppColors.navyLight,
-                shape: BoxShape.circle,
-                border: Border.all(color: AppColors.borderSoft, width: 1),
-              ),
-              child: Center(child: Text(emoji, style: const TextStyle(fontSize: 36))),
-            ),
-            const SizedBox(height: AppSpace.x5),
-            Text(
-              title,
-              style: Theme.of(context).textTheme.headlineSmall,
-              textAlign: TextAlign.center,
-            ),
-            if (message != null) ...[
-              const SizedBox(height: AppSpace.x2),
-              Text(
-                message!,
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 14,
-                  height: 1.5,
+    return Semantics(
+      // Empty states are conceptually one element — flatten to a single
+      // accessibility node so screen readers announce title + message
+      // together instead of three separate items.
+      container: true,
+      label: '$title${message != null ? '. $message' : ''}',
+      child: Center(
+        child: Padding(
+          padding: padding,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 88,
+                height: 88,
+                decoration: BoxDecoration(
+                  color: AppColors.navyLight,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.borderSoft, width: 1),
                 ),
+                // Mark the emoji decorative — screen readers shouldn't read it.
+                child: Center(child: ExcludeSemantics(
+                  child: Text(emoji, style: const TextStyle(fontSize: 36)),
+                )),
+              ),
+              const SizedBox(height: AppSpace.x5),
+              Text(
+                title,
+                style: Theme.of(context).textTheme.headlineSmall,
                 textAlign: TextAlign.center,
               ),
+              if (message != null) ...[
+                const SizedBox(height: AppSpace.x2),
+                Text(
+                  message!,
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 14,
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+              if (actionLabel != null && onAction != null) ...[
+                const SizedBox(height: AppSpace.x6),
+                AppButton(
+                  label: actionLabel!,
+                  onPressed: onAction,
+                  style: AppButtonStyle.outline,
+                ),
+              ],
             ],
-            if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: AppSpace.x6),
-              AppButton(
-                label: actionLabel!,
-                onPressed: onAction,
-                style: AppButtonStyle.outline,
-              ),
-            ],
-          ],
+          ),
         ),
       ),
     );

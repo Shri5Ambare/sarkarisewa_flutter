@@ -139,10 +139,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           TierBadge(tier: auth.tier),
           const SizedBox(width: 8),
           IconButton(
+            tooltip: 'Friends',
             icon: const Icon(Icons.group, color: AppColors.textSecondary),
             onPressed: () => context.push('/friends'),
           ),
           IconButton(
+            tooltip: 'Profile',
             icon: const Icon(Icons.person_outlined, color: AppColors.textSecondary),
             onPressed: () => context.push('/profile'),
           ),

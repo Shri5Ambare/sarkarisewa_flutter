@@ -141,6 +141,7 @@ class _SignupScreenState extends State<SignupScreen> {
                               labelText: 'Password',
                               prefixIcon: const Icon(Icons.lock_outlined, color: AppColors.textMuted),
                               suffixIcon: IconButton(
+                                tooltip: _obscure ? 'Show password' : 'Hide password',
                                 icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined, color: AppColors.textMuted),
                                 onPressed: () => setState(() => _obscure = !_obscure),
                               ),

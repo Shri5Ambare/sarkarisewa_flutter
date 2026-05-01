@@ -57,6 +57,14 @@
       ]
     },
     {
+      "collectionGroup": "news",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "courseId",  "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "friend_requests",
       "queryScope": "COLLECTION",
       "fields": [

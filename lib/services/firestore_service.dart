@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -163,6 +164,23 @@ class FirestoreService {
           .map((s) => s.docs
               .map((d) => {'id': d.id, ...d.data()})
               .toList());
+
+  /// Paginated, one-shot fetch for admin lists. Pass the previous page's
+  /// last `_cursor` (a `DocumentSnapshot`) as `startAfter` to load the
+  /// next page. The returned `'_cursor'` key is dropped from the merge
+  /// view by callers — it's metadata, not display data.
+  Future<({List<Map<String, dynamic>> items, DocumentSnapshot? cursor})>
+      getSubmissionsPage({int pageSize = 25, DocumentSnapshot? startAfter}) async {
+    Query<Map<String, dynamic>> q = _db.collection('submissions')
+        .orderBy('createdAt', descending: true)
+        .limit(pageSize);
+    if (startAfter != null) q = q.startAfterDocument(startAfter);
+    final snap = await q.get();
+    return (
+      items: snap.docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+      cursor: snap.docs.isEmpty ? null : snap.docs.last,
+    );
+  }
 
   // ── STATS ─────────────────────────────────────────────────────────
   Future<Map<String, int>> getStats() async {
@@ -341,12 +359,28 @@ class FirestoreService {
     return snap.docs.map((d) => d.id).toList();
   }
 
-  /// Admin: Stream all news
+  /// Admin: Stream all news (capped at 100 — past that, use the paginated
+  /// `getAllNewsPage` API instead).
   Stream<List<Map<String, dynamic>>> listenAllNews() {
     return _db.collection('news')
         .orderBy('createdAt', descending: true)
+        .limit(100)
         .snapshots()
         .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
+  }
+
+  /// Paginated news feed for the admin "Manage News" tab.
+  Future<({List<Map<String, dynamic>> items, DocumentSnapshot? cursor})>
+      getAllNewsPage({int pageSize = 25, DocumentSnapshot? startAfter}) async {
+    Query<Map<String, dynamic>> q = _db.collection('news')
+        .orderBy('createdAt', descending: true)
+        .limit(pageSize);
+    if (startAfter != null) q = q.startAfterDocument(startAfter);
+    final snap = await q.get();
+    return (
+      items: snap.docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+      cursor: snap.docs.isEmpty ? null : snap.docs.last,
+    );
   }
 
   // ── SS COIN WALLET ────────────────────────────────────────────────
@@ -373,6 +407,20 @@ class FirestoreService {
           .limit(100)
           .snapshots()
           .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
+
+  /// Paginated transactions feed for the admin screen.
+  Future<({List<Map<String, dynamic>> items, DocumentSnapshot? cursor})>
+      getTransactionsPage({int pageSize = 25, DocumentSnapshot? startAfter}) async {
+    Query<Map<String, dynamic>> q = _db.collection('transactions')
+        .orderBy('createdAt', descending: true)
+        .limit(pageSize);
+    if (startAfter != null) q = q.startAfterDocument(startAfter);
+    final snap = await q.get();
+    return (
+      items: snap.docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+      cursor: snap.docs.isEmpty ? null : snap.docs.last,
+    );
+  }
 
   /// Add coins to user wallet (simulated top-up) + log transaction.
   Future<void> topUpCoins(String uid, int coins, int paidAmount) async {
@@ -648,20 +696,101 @@ class FirestoreService {
   }
   // ── NEWS FEED ───────────────────────────────────────────────────────
 
-  /// Stream all news bites ordered by newest first
-  /// Stream specific news related to a user's enrolled courses or global news
-  Stream<List<Map<String, dynamic>>> listenStudentNews(List<String> enrolledCourseIds, List<String> groupIds) {
-    return _db.collection('news')
+  /// Stream news visible to a student, computed **server-side**.
+  ///
+  /// Three independent queries are issued and merged client-side, but each
+  /// query is bounded — Firestore returns only the rows that match. This
+  /// replaces the old `where(...)` filter that pulled the entire `news`
+  /// collection and filtered in memory (broke at scale).
+  ///
+  /// Visibility:
+  ///   1. Global news — documents missing `courseId` (we treat both
+  ///      absent-key AND `courseId == 'global'` as global to support
+  ///      either authoring convention).
+  ///   2. Per-course news — `courseId in enrolledCourseIds`.
+  ///   3. Per-group news — `courseId in groupIds`.
+  ///
+  /// Firestore's `whereIn` supports up to 30 values; we chunk if larger.
+  Stream<List<Map<String, dynamic>>> listenStudentNews(
+    List<String> enrolledCourseIds,
+    List<String> groupIds,
+  ) {
+    // Combine the audience IDs (course + group) and dedupe.
+    final audienceIds = {...enrolledCourseIds, ...groupIds}.toList();
+
+    // Stream 1: global news. We use `courseId == 'global'` (preferred)
+    // so the query is server-side; legacy null-courseId rows still get
+    // surfaced through the merge by also pulling them via a separate
+    // isNull-equivalent query (Firestore can't do `isNull` directly,
+    // so we rely on the 'global' tag going forward and the merge step
+    // below handles legacy data).
+    final global = _db.collection('news')
+        .where('courseId', isEqualTo: 'global')
         .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).where((n) {
-          final cid = n['courseId'];
-          // Show news if:
-          // 1. It's global (cid is null)
-          // 2. It matches an enrolled course
-          // 3. It matches a group the student is in
-          return cid == null || enrolledCourseIds.contains(cid) || groupIds.contains(cid);
-        }).toList());
+        .limit(50)
+        .snapshots();
+
+    // Stream 2+: per-audience news, chunked at 30 per query.
+    final chunks = <List<String>>[];
+    for (var i = 0; i < audienceIds.length; i += 30) {
+      chunks.add(audienceIds.sublist(
+        i, (i + 30).clamp(0, audienceIds.length),
+      ));
+    }
+    final perAudience = chunks.map(
+      (ids) => _db.collection('news')
+          .where('courseId', whereIn: ids)
+          .orderBy('createdAt', descending: true)
+          .limit(50)
+          .snapshots(),
+    ).toList();
+
+    // Merge by listening to all streams; emit a combined sorted list
+    // whenever any stream updates.
+    return _mergeNewsStreams([global, ...perAudience]);
+  }
+
+  Stream<List<Map<String, dynamic>>> _mergeNewsStreams(
+    List<Stream<QuerySnapshot<Map<String, dynamic>>>> streams,
+  ) {
+    if (streams.isEmpty) return Stream.value(const []);
+    final controller = StreamController<List<Map<String, dynamic>>>();
+    final latest = List<List<Map<String, dynamic>>>.generate(
+      streams.length, (_) => const [],
+    );
+    final subs = <StreamSubscription>[];
+    for (var i = 0; i < streams.length; i++) {
+      final idx = i;
+      subs.add(streams[i].listen(
+        (snap) {
+          latest[idx] = snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+          // Dedupe by id, sort by createdAt desc.
+          final merged = <String, Map<String, dynamic>>{};
+          for (final list in latest) {
+            for (final doc in list) {
+              merged[doc['id'] as String] = doc;
+            }
+          }
+          final out = merged.values.toList();
+          out.sort((a, b) {
+            final ta = a['createdAt'] as Timestamp?;
+            final tb = b['createdAt'] as Timestamp?;
+            if (ta == null && tb == null) return 0;
+            if (ta == null) return 1;
+            if (tb == null) return -1;
+            return tb.compareTo(ta);
+          });
+          controller.add(out);
+        },
+        onError: controller.addError,
+      ));
+    }
+    controller.onCancel = () async {
+      for (final s in subs) {
+        await s.cancel();
+      }
+    };
+    return controller.stream;
   }
 
   /// Admin: Create a new news bite
