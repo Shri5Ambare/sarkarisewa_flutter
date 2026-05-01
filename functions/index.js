@@ -6,9 +6,13 @@
 // 3. onPaymentApproved    (Firestore trigger)   — server-side coin top-up
 // 4. expireStaleBattles   (scheduled, every 6h) — cancel `active` battles
 //                                                 older than 7 days
-// 5. dailyStreakReminder  (scheduled, 13:15 UTC = 19:00 NPT) — push to
-//                                                 users who haven't
-//                                                 opened the app today
+// 5. dailyStreakReminder  (scheduled, 19:00 NPT) — push to users who
+//                                                 haven't opened today
+// 6. computeDailyAggregates (scheduled, 00:30 NPT) — write per-day
+//                                                 DAU/signups/revenue
+//                                                 stats to
+//                                                 `daily_aggregates`
+//                                                 for the admin charts
 // ═══════════════════════════════════════════════════════════════════════
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentUpdated }  = require("firebase-functions/v2/firestore");
@@ -453,5 +457,105 @@ exports.dailyStreakReminder = onSchedule(
     }
 
     logger.info(`dailyStreakReminder: sent ${sent}/${candidates.length}.`);
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════
+// 6. computeDailyAggregates — pre-aggregate yesterday's metrics
+// ─────────────────────────────────────────────────────────────────────
+// Runs once a day at 00:30 Asia/Kathmandu. Computes "yesterday" in NPT
+// and writes a single doc to `daily_aggregates/{YYYY-MM-DD}`:
+//
+//   {
+//     date: '2026-04-30',
+//     dau: 1247,
+//     signups: 38,
+//     coinTopupRs: 12450,
+//     coinSpend:   8200,
+//     testsTaken:  812,
+//     battlesPlayed: 156,
+//     computedAt: <timestamp>
+//   }
+//
+// The admin DAU/Revenue charts read this collection — chart data for a
+// 30-day window is then 30 doc reads, not a per-render scan of the
+// 100k-row `transactions` collection.
+//
+// Idempotent: setting the doc by date overwrites prior runs cleanly.
+// ═══════════════════════════════════════════════════════════════════════
+exports.computeDailyAggregates = onSchedule(
+  {
+    region:   "asia-south1",
+    schedule: "30 0 * * *",
+    timeZone: "Asia/Kathmandu",
+  },
+  async () => {
+    // Yesterday in NPT.
+    const offsetMs = 5.75 * 60 * 60 * 1000;
+    const nowLocal = new Date(Date.now() + offsetMs);
+    const yLocal   = new Date(nowLocal.getTime() - 24 * 60 * 60 * 1000);
+    const dayStartUtc = new Date(Date.UTC(
+      yLocal.getUTCFullYear(), yLocal.getUTCMonth(), yLocal.getUTCDate()
+    ) - offsetMs);
+    const dayEndUtc = new Date(dayStartUtc.getTime() + 24 * 60 * 60 * 1000);
+    const dateKey = `${yLocal.getUTCFullYear()}-${
+      String(yLocal.getUTCMonth() + 1).padStart(2, "0")}-${
+      String(yLocal.getUTCDate()).padStart(2, "0")}`;
+
+    const startTs = admin.firestore.Timestamp.fromDate(dayStartUtc);
+    const endTs   = admin.firestore.Timestamp.fromDate(dayEndUtc);
+
+    // Run all the count queries in parallel.
+    const [
+      dauSnap, signupsSnap, topupSnap, spendSnap,
+      testsSnap, battlesSnap,
+    ] = await Promise.all([
+      db.collection("users")
+        .where("lastActiveAt", ">=", startTs)
+        .where("lastActiveAt", "<",  endTs)
+        .count().get(),
+      db.collection("users")
+        .where("createdAt", ">=", startTs)
+        .where("createdAt", "<",  endTs)
+        .count().get(),
+      db.collection("transactions")
+        .where("type", "==", "topup")
+        .where("createdAt", ">=", startTs)
+        .where("createdAt", "<",  endTs)
+        .get(),
+      db.collection("transactions")
+        .where("type", "==", "spend")
+        .where("createdAt", ">=", startTs)
+        .where("createdAt", "<",  endTs)
+        .get(),
+      db.collection("mock_test_results")
+        .where("completedAt", ">=", startTs)
+        .where("completedAt", "<",  endTs)
+        .count().get(),
+      db.collection("battles")
+        .where("status", "==", "completed")
+        .where("createdAt", ">=", startTs)
+        .where("createdAt", "<",  endTs)
+        .count().get(),
+    ]);
+
+    const sum = (snap, field) => snap.docs.reduce(
+      (acc, d) => acc + Number(d.data()[field] ?? 0), 0
+    );
+
+    const doc = {
+      date:           dateKey,
+      dau:            dauSnap.data().count ?? 0,
+      signups:        signupsSnap.data().count ?? 0,
+      coinTopupRs:    sum(topupSnap, "amount"),
+      coinTopupCoins: sum(topupSnap, "coins"),
+      coinSpend:      sum(spendSnap, "coins"),
+      testsTaken:     testsSnap.data().count ?? 0,
+      battlesPlayed:  battlesSnap.data().count ?? 0,
+      computedAt:     admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    await db.collection("daily_aggregates").doc(dateKey).set(doc);
+    logger.info(`computeDailyAggregates: wrote ${dateKey}`, doc);
   }
 );

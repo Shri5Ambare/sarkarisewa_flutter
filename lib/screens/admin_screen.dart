@@ -9,7 +9,11 @@ import 'package:cloud_functions/cloud_functions.dart';
 import '../providers/auth_provider.dart';
 import '../providers/locale_provider.dart';
 import '../services/firestore_service.dart';
+import '../services/audit_service.dart';
 import '../services/google_news_service.dart';
+import '../widgets/admin/live_ops_card.dart';
+import '../widgets/admin/audit_log_view.dart';
+import '../widgets/confirm_dialog.dart';
 // import '../services/cloudinary_service.dart';
 import '../services/r2_storage_service.dart';
 import '../services/csv_exporter.dart';
@@ -39,21 +43,24 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 
   static const _baseTabs = [
-    (id: 0, label: 'Dashboard',   icon: Icons.dashboard_outlined),
-    (id: 1, label: 'Payments',    icon: Icons.receipt_outlined),
-    (id: 2, label: 'Orders',      icon: Icons.shopping_bag_outlined),
-    (id: 3, label: 'Users',       icon: Icons.people_outlined),
-    (id: 4, label: 'Courses',     icon: Icons.menu_book_outlined),
-    (id: 5, label: 'Submissions', icon: Icons.assignment_outlined),
-    (id: 6, label: 'News',        icon: Icons.newspaper_outlined),
-    (id: 7, label: 'Ledger',      icon: Icons.receipt_long_outlined),
-    (id: 8, label: 'Settings',    icon: Icons.settings_outlined),
-    (id: 9, label: 'Analytics',   icon: Icons.analytics_outlined),
-    (id: 10, label: 'Access',     icon: Icons.shield_outlined),
+    (id: 0,  label: 'Dashboard',   icon: Icons.dashboard_outlined),
+    (id: 1,  label: 'Payments',    icon: Icons.receipt_outlined),
+    (id: 2,  label: 'Orders',      icon: Icons.shopping_bag_outlined),
+    (id: 3,  label: 'Users',       icon: Icons.people_outlined),
+    (id: 4,  label: 'Courses',     icon: Icons.menu_book_outlined),
+    (id: 5,  label: 'Submissions', icon: Icons.assignment_outlined),
+    (id: 6,  label: 'News',        icon: Icons.newspaper_outlined),
+    (id: 7,  label: 'Ledger',      icon: Icons.receipt_long_outlined),
+    (id: 8,  label: 'Settings',    icon: Icons.settings_outlined),
+    (id: 9,  label: 'Analytics',   icon: Icons.analytics_outlined),
+    (id: 10, label: 'Access',      icon: Icons.shield_outlined),
+    (id: 11, label: 'Audit',       icon: Icons.history_outlined),
   ];
 
   List<({int id, String label, IconData icon})> _visibleTabs(bool isSuperAdmin) =>
-      isSuperAdmin ? _baseTabs : _baseTabs.where((t) => t.id < 10).toList();
+      // 'Access' (10) is super-admin only. 'Audit' (11) is available to
+      // all admins so they can review their own + peer activity.
+      isSuperAdmin ? _baseTabs : _baseTabs.where((t) => t.id != 10).toList();
 
   @override
   Widget build(BuildContext context) {
@@ -119,9 +126,18 @@ class _AdminScreenState extends State<AdminScreen> {
       8 => _SettingsTab(_db, _showToast),
       9 => _AnalyticsTab(_db),
       10 => _AccessControlTab(_db, _showToast),
+      11 => const _AuditTab(),
       _ => const SizedBox(),
     };
   }
+}
+
+/// Admin "Audit" tab — full-page paginated audit log. Listed last so it
+/// can be linked to from any other tab via "View related audit entries".
+class _AuditTab extends StatelessWidget {
+  const _AuditTab();
+  @override
+  Widget build(BuildContext context) => const AuditLogView();
 }
 
 // ── Nav Tab ───────────────────────────────────────────────────────────────────
@@ -202,6 +218,16 @@ class _DashboardTab extends StatelessWidget {
                           'body': bodyCtrl.text.trim(),
                           'imageUrl': imageCtrl.text.trim().isNotEmpty ? imageCtrl.text.trim() : null,
                         });
+                        await AuditService().log(
+                          action: 'broadcast.push',
+                          target: const AuditTarget(kind: 'topic', id: 'all_users'),
+                          extra: {
+                            'title': titleCtrl.text.trim(),
+                            'body':  bodyCtrl.text.trim(),
+                            if (imageCtrl.text.trim().isNotEmpty)
+                              'imageUrl': imageCtrl.text.trim(),
+                          },
+                        );
 
                         if (ctx.mounted) Navigator.pop(ctx);
                         if (context.mounted) {
@@ -235,6 +261,9 @@ class _DashboardTab extends StatelessWidget {
       return ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // Real-time pulse of in-flight ops. Refreshes itself every 30s.
+          const LiveOpsCard(),
+          const SizedBox(height: 20),
           const Text('📊 Overview', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
           const SizedBox(height: 16),
           GridView.count(
@@ -544,17 +573,56 @@ class _PaymentCard extends StatelessWidget {
           Row(children: [
             _ActionBtn('Approve ✅', AppColors.emerald, Icons.check_circle_outline, () async {
               final uid = req['uid'] as String? ?? '';
+              final ok = await ConfirmDialog.show(
+                context: context,
+                icon: Icons.check_circle_outline,
+                title: 'Approve $coins coins for ${req['userName']}?',
+                message: 'This credits the user immediately and is logged. '
+                         'Make sure the bank transfer of Rs $amount has '
+                         'actually arrived.',
+                confirmLabel: 'Approve',
+              );
+              if (!ok) return;
               try {
                 await db.approvePaymentRequest(req['id'], uid, coins, amount);
+                await AuditService().log(
+                  action: 'payment.approve',
+                  target: AuditTarget(kind: 'payment_request', id: req['id']),
+                  extra: {
+                    'uid':       uid,
+                    'userName':  req['userName'],
+                    'coins':     coins,
+                    'amountRs':  amount,
+                    'packLabel': req['packLabel'],
+                  },
+                );
                 toast('✅ Approved — $coins coins added to ${req['userName']}');
               } catch (e) { toast('❌ $e'); }
             }),
             const SizedBox(width: 8),
             _ActionBtn('Reject ❌', AppColors.ruby, Icons.cancel_outlined, () async {
-              final ok = await _confirm(context, 'Reject this payment request?');
+              final ok = await ConfirmDialog.show(
+                context: context,
+                icon: Icons.cancel_outlined,
+                title: 'Reject this payment request?',
+                message: 'The user will see a rejected status. Make sure '
+                         "you've notified them out-of-band first.",
+                confirmLabel: 'Reject',
+                danger: true,
+              );
               if (!ok) return;
               try {
                 await db.rejectPaymentRequest(req['id']);
+                await AuditService().log(
+                  action: 'payment.reject',
+                  target: AuditTarget(kind: 'payment_request', id: req['id']),
+                  extra: {
+                    'uid':       req['uid'],
+                    'userName':  req['userName'],
+                    'coins':     coins,
+                    'amountRs':  amount,
+                  },
+                );
                 toast('Payment request rejected');
               } catch (e) { toast('❌ $e'); }
             }),
@@ -1085,12 +1153,37 @@ class _CourseAdminCard extends StatelessWidget {
           onPressed: () => _showCourseDialog(context, db, toast, course: course),
         ),
         IconButton(
+          tooltip: 'Delete course',
           icon: const Icon(Icons.delete_outline, color: AppColors.ruby, size: 20),
           onPressed: () async {
-            final ok = await _confirm(context, 'Delete "${course['title']}"?');
+            // Typed confirmation — irreversible action.
+            final title = (course['title'] ?? 'this course').toString();
+            final ok = await ConfirmDialog.showTyped(
+              context: context,
+              title: 'Delete "$title"?',
+              message: 'This deletes the course and all its curriculum '
+                       'metadata. Enrolled users keep access to past lessons '
+                       "in their progress doc, but the course can't be "
+                       'enrolled in again.',
+              requireTyping: 'DELETE',
+              confirmLabel: 'Delete course',
+            );
             if (!ok) return;
-            try { await db.deleteCourse(course['id']); toast('✅ Course deleted'); }
-            catch (e) { toast('❌ $e'); }
+            try {
+              await db.deleteCourse(course['id']);
+              await AuditService().log(
+                action: 'course.delete',
+                target: AuditTarget(kind: 'course', id: course['id']),
+                before: {
+                  'title': course['title'],
+                  'price': course['price'],
+                  'category': course['category'],
+                },
+              );
+              toast('✅ Course deleted');
+            } catch (e) {
+              toast('❌ $e');
+            }
           },
         ),
       ]),
@@ -1834,6 +1927,15 @@ void _showAwardCoinsDialog(BuildContext context, Map<String, dynamic> user) {
             final reason = reasonCtrl.text.trim().isEmpty ? 'Admin adjustment' : reasonCtrl.text.trim();
             try {
               await db.adminAdjustCoins(user['id'], delta, reason);
+              await AuditService().log(
+                action: award ? 'user.coin_award' : 'user.coin_deduct',
+                target: AuditTarget(kind: 'user', id: user['id']),
+                extra: {
+                  'userEmail': user['email'],
+                  'delta':     delta,
+                  'reason':    reason,
+                },
+              );
               if (ctx.mounted) Navigator.pop(ctx);
             } catch (_) {}
           },

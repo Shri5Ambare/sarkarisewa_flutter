@@ -244,6 +244,25 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && request.auth.uid == userId;
     }
 
+    // 19. Admin audit logs — append-only, admins/super-admins read.
+    // Anyone with an admin-tier role can write a single record (the
+    // adminUid must match their own uid). Updates and deletes are
+    // forbidden — the log is immutable history.
+    match /admin_audit_logs/{logId} {
+      allow read: if isAdmin() || isSuperAdmin();
+      allow create: if isSignedIn() &&
+        (isAdmin() || isSuperAdmin() || isTeacherOrAdmin()) &&
+        request.resource.data.adminUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // 20. Daily aggregates — read-only by admins; only writable by
+    // Cloud Functions (which use the Admin SDK and bypass these rules).
+    match /daily_aggregates/{day} {
+      allow read: if isAdmin() || isSuperAdmin();
+      allow write: if false;
+    }
+
     // Default lockdown fallback
     match /{document=**} {
       allow read, write: if false;
