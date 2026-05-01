@@ -126,7 +126,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final lang = context.watch<LocaleProvider>().lang;
-    final enrolled = List<String>.from(auth.profile?['enrolled'] ?? []);
+    final enrolled = List<String>.from(auth.profile?['enrolledCourses'] ?? []);
 
     return ResponsiveScaffold(
       currentIndex: 0,
@@ -139,10 +139,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           TierBadge(tier: auth.tier),
           const SizedBox(width: 8),
           IconButton(
+            tooltip: 'Friends',
             icon: const Icon(Icons.group, color: AppColors.textSecondary),
             onPressed: () => context.push('/friends'),
           ),
           IconButton(
+            tooltip: 'Profile',
             icon: const Icon(Icons.person_outlined, color: AppColors.textSecondary),
             onPressed: () => context.push('/profile'),
           ),
@@ -172,80 +174,62 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Greeting
-                        Container(
-                          padding: const EdgeInsets.all(18),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(colors: [AppColors.saffron.withAlpha(38), AppColors.violet.withAlpha(20)]),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: AppColors.saffron.withAlpha(51)),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          'Namaste, ${auth.profile?['name'] ?? 'Student'}! 🙏',
-                                          style: Theme.of(context).textTheme.titleLarge,
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          t('dashboard.courses', lang),
-                                          style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const Icon(Icons.menu_book_outlined, color: AppColors.textMuted, size: 38),
-                                ],
-                              ),
-                              const SizedBox(height: 14),
-                              // Stats mini-row
-                              Row(
-                                children: [
-                                  _StatChip(icon: '🪙', label: '${auth.profile?['coins'] ?? 0}', tooltip: 'Coins'),
-                                  const SizedBox(width: 10),
-                                  _StatChip(icon: '📚', label: '${enrolled.length}', tooltip: 'Enrolled'),
-                                  const SizedBox(width: 10),
-                                  _StatChip(icon: '🔥', label: auth.tier.toUpperCase(), tooltip: 'Plan'),
-                                ],
-                              ),
-                            ],
-                          ),
+                        // ── Hero greeting ─────────────────────────────
+                        _HeroHeader(
+                          name: (auth.profile?['name'] ?? 'Student').toString(),
+                          tier: auth.tier,
+                          streak: (auth.profile?['streak'] ?? 0) as int,
+                          coins: (auth.profile?['coins'] ?? 0) as int,
+                          enrolledCount: enrolled.length,
                         ),
-                        const SizedBox(height: 16),
-                        GestureDetector(
-                          onTap: () => context.push('/battle_lobby'),
-                          child: Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(colors: [AppColors.violet, AppColors.saffron]),
-                              borderRadius: BorderRadius.circular(16),
+                        const SizedBox(height: 18),
+
+                        // ── Quick actions (Ambition Guru style) ───────
+                        _QuickActionsRow(
+                          actions: [
+                            _QuickAction(
+                              icon: Icons.article_outlined,
+                              label: 'News',
+                              color: AppColors.saffron,
+                              onTap: () => context.push('/news'),
                             ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.local_fire_department, color: Colors.white, size: 32),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: const [
-                                      Text('1v1 Battleground', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                                      Text('Challenge your friends!', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                                    ],
-                                  ),
-                                ),
-                                const Icon(Icons.chevron_right, color: Colors.white),
-                              ],
+                            _QuickAction(
+                              icon: Icons.history_edu_outlined,
+                              label: 'PYQ',
+                              color: AppColors.emerald,
+                              onTap: () => context.push('/pyq'),
                             ),
-                          ),
+                            _QuickAction(
+                              icon: Icons.edit_note,
+                              label: 'Writing',
+                              color: AppColors.sky,
+                              onTap: () => context.push('/writing'),
+                            ),
+                            _QuickAction(
+                              icon: Icons.local_fire_department,
+                              label: 'Battle',
+                              color: AppColors.ruby,
+                              onTap: () => context.push('/battle_lobby'),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 18),
+
+                        // ── Continue Learning ─────────────────────────
+                        if (enrolled.isNotEmpty) ...[
+                          _ContinueLearningCard(
+                            course: _courses.firstWhere(
+                              (c) => enrolled.contains(c['id']),
+                              orElse: () => const <String, dynamic>{},
+                            ),
+                            onTap: (course) {
+                              if (course.isNotEmpty) {
+                                context.push('/course/${course['id']}', extra: course);
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                        ],
 
                         // Search
                         TextField(
@@ -436,33 +420,374 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-class _StatChip extends StatelessWidget {
-  final String icon;
-  final String label;
-  final String tooltip;
+// ── Hero header (greeting + stats) ──────────────────────────────────────────
+class _HeroHeader extends StatelessWidget {
+  final String name;
+  final String tier;
+  final int streak;
+  final int coins;
+  final int enrolledCount;
 
-  const _StatChip({required this.icon, required this.label, required this.tooltip});
+  const _HeroHeader({
+    required this.name,
+    required this.tier,
+    required this.streak,
+    required this.coins,
+    required this.enrolledCount,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: AppColors.navyLight,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(icon, style: const TextStyle(fontSize: 13)),
-            const SizedBox(width: 5),
-            Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
-          ],
+    // Design system: greeting card uses the **soft** brand gradient
+    // (`saffron @ 15% → violet @ 8%` over white) with a hairline tinted
+    // border. Text is dark — this is NOT the saturated brand surface.
+    return Container(
+      padding: const EdgeInsets.all(AppSpace.x5),
+      decoration: BoxDecoration(
+        gradient: AppGradients.brandSoft,
+        borderRadius: BorderRadius.circular(AppRadius.xxl),
+        border: Border.all(color: AppColors.primary.withAlpha(26), width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Namaste 🙏',
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      name,
+                      style: Theme.of(context).textTheme.headlineMedium,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              // Avatar circle: solid brand gradient, white initial.
+              Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                  gradient: AppGradients.brand,
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: Text(
+                    (name.isEmpty ? 'U' : name.substring(0, 1)).toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 18,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          // Stat chips — white pills with hairline border (design system
+          // "stat" component). Tier rendered separately as a tinted pill.
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _StatChip(emoji: '🔥', label: '$streak-day streak'),
+              _StatChip(emoji: '🪙', label: '$coins coins'),
+              _StatChip(emoji: '📚', label: '$enrolledCount courses'),
+              _TierChip(tier: tier),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatChip extends StatelessWidget {
+  final String emoji;
+  final String label;
+  const _StatChip({required this.emoji, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.cardBg,
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(emoji, style: const TextStyle(fontSize: 13)),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TierChip extends StatelessWidget {
+  final String tier;
+  const _TierChip({required this.tier});
+
+  @override
+  Widget build(BuildContext context) {
+    final (emoji, label, tint) = switch (tier) {
+      'gold'   => ('🥇', 'Gold',   AppColors.gold),
+      'silver' => ('🥈', 'Silver', AppColors.sky),
+      _        => ('🆓', 'Free',   AppColors.emerald),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        // Tier badges use tinted bg + same-color border at ~30% alpha.
+        color: tint.withAlpha(31), // ~12%
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+        border: Border.all(color: tint.withAlpha(77)), // ~30%
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(emoji, style: const TextStyle(fontSize: 13)),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: tint,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Quick actions strip ─────────────────────────────────────────────────────
+class _QuickAction {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+  const _QuickAction({required this.icon, required this.label, required this.color, required this.onTap});
+}
+
+class _QuickActionsRow extends StatelessWidget {
+  final List<_QuickAction> actions;
+  const _QuickActionsRow({required this.actions});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (var i = 0; i < actions.length; i++) ...[
+          Expanded(child: _QuickActionTile(action: actions[i])),
+          if (i != actions.length - 1) const SizedBox(width: 10),
+        ],
+      ],
+    );
+  }
+}
+
+class _QuickActionTile extends StatefulWidget {
+  final _QuickAction action;
+  const _QuickActionTile({required this.action});
+
+  @override
+  State<_QuickActionTile> createState() => _QuickActionTileState();
+}
+
+class _QuickActionTileState extends State<_QuickActionTile> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final action = widget.action;
+    // Design-system QuickTile: left-aligned, tinted icon block (12% alpha),
+    // 14-radius card, hairline border, 600/14 label.
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) {
+        setState(() => _pressed = false);
+        action.onTap();
+      },
+      onTapCancel: () => setState(() => _pressed = false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.95 : 1.0,
+        duration: const Duration(milliseconds: 130),
+        curve: Curves.easeInOut,
+        child: Container(
+          padding: const EdgeInsets.all(AppSpace.x4),
+          decoration: BoxDecoration(
+            color: AppColors.cardBg,
+            borderRadius: BorderRadius.circular(AppRadius.xl),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: action.color.withAlpha(31), // ~12% tint
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
+                ),
+                child: Icon(action.icon, color: action.color, size: 22),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                action.label,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+}
+
+// ── Continue learning band ──────────────────────────────────────────────────
+//
+// Canonical CourseCard recipe from the design system:
+//   - white surface, hairline border, radius 14
+//   - 5px left-edge accent stripe in the course color
+//   - 48×48 emoji block in `accent @ 12%` tint
+//   - title + subtitle + thin progress bar
+class _ContinueLearningCard extends StatelessWidget {
+  final Map<String, dynamic> course;
+  final ValueChanged<Map<String, dynamic>> onTap;
+  const _ContinueLearningCard({required this.course, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    if (course.isEmpty) return const SizedBox.shrink();
+    final title    = (course['title'] ?? 'Continue Learning').toString();
+    final category = (course['category'] ?? '').toString();
+    final emoji    = (course['emoji'] as String?) ?? '📚';
+    final accentHex = course['color'] as String?;
+    final accent   = _parseHex(accentHex) ?? AppColors.primary;
+
+    return GestureDetector(
+      onTap: () => onTap(course),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppColors.cardBg,
+            border: Border.all(color: AppColors.border),
+            borderRadius: BorderRadius.circular(AppRadius.xl),
+          ),
+          child: Row(
+            children: [
+              // 5-px accent stripe.
+              Container(width: 5, height: 64, color: accent),
+              const SizedBox(width: 12),
+              // Emoji block.
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: accent.withAlpha(31), // ~12%
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
+                ),
+                child: Center(
+                  child: Text(emoji, style: const TextStyle(fontSize: 22)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Continue Learning',
+                        style: TextStyle(
+                          color: accent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (category.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          category,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.only(right: 12),
+                child: Icon(
+                  Icons.chevron_right,
+                  color: AppColors.textMuted,
+                  size: 22,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Color? _parseHex(String? hex) {
+    if (hex == null || hex.isEmpty) return null;
+    var s = hex.replaceAll('#', '');
+    if (s.length == 6) s = 'FF$s';
+    final v = int.tryParse(s, radix: 16);
+    return v == null ? null : Color(v);
   }
 }

@@ -7,9 +7,9 @@ import '../providers/locale_provider.dart';
 import '../services/firestore_service.dart';
 import '../l10n/strings.dart';
 import '../theme.dart';
-import '../widgets/responsive_scaffold.dart';
 import '../widgets/shimmer_loader.dart';
 import '../widgets/app_button.dart';
+import '../widgets/empty_state.dart';
 
 class SocialScreen extends StatelessWidget {
   const SocialScreen({super.key});
@@ -31,8 +31,7 @@ class SocialScreen extends StatelessWidget {
     final lang = context.watch<LocaleProvider>().lang;
     final db   = FirestoreService();
 
-    return ResponsiveScaffold(
-      currentIndex: 3,
+    return Scaffold(
       appBar: AppBar(title: Text(t('social.title', lang))),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -84,9 +83,10 @@ class SocialScreen extends StatelessWidget {
               }
               final users = snap.data!;
               if (users.isEmpty) {
-                return const Padding(
-                  padding: EdgeInsets.all(32),
-                  child: Center(child: Text('No leaderboard data yet.', style: TextStyle(color: AppColors.textMuted))),
+                return const EmptyState(
+                  emoji: '🏆',
+                  title: 'Leaderboard is empty',
+                  message: 'Take a mock test or win a battle to start earning points.',
                 );
               }
 

@@ -3,12 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
+import '../services/streak_service.dart';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 
 class AuthProvider extends ChangeNotifier {
   final _authService      = AuthService();
   final _firestoreService = FirestoreService();
+  final _streakService    = StreakService();
 
   User? _user;
   Map<String, dynamic>? _profile;
@@ -47,6 +49,14 @@ class AuthProvider extends ChangeNotifier {
         }
       } catch (e) {
         _error = 'Failed to load user profile. Please check your connection.';
+      }
+
+      // Update daily-open streak (best-effort).
+      try {
+        final newStreak = await _streakService.recordOpen(firebaseUser.uid);
+        if (newStreak != null) _profile?['streak'] = newStreak;
+      } catch (_) {
+        // Silently ignore — streak is non-critical.
       }
 
       // Try to get and save FCM Token (Independent of profile loading)

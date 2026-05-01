@@ -27,9 +27,9 @@ class ResponsiveScaffold extends StatelessWidget {
 
     final navItems = [
       (icon: Icons.dashboard_outlined, active: Icons.dashboard, label: t('nav.home', lang), path: '/dashboard'),
-      (icon: Icons.mic_outlined, active: Icons.mic, label: t('nav.ai', lang), path: '/ai-viva'),
-      (icon: Icons.edit_outlined, active: Icons.edit, label: t('nav.writing', lang), path: '/writing'),
-      (icon: Icons.emoji_events_outlined, active: Icons.emoji_events, label: t('nav.social', lang), path: '/social'),
+      (icon: Icons.history_edu_outlined, active: Icons.history_edu, label: t('nav.pyq', lang), path: '/pyq'),
+      (icon: Icons.assignment_outlined, active: Icons.assignment, label: t('nav.mock', lang), path: '/mock'),
+      (icon: Icons.live_tv_outlined, active: Icons.live_tv, label: t('nav.live', lang), path: '/live'),
       (icon: Icons.person_outlined, active: Icons.person, label: t('nav.profile', lang), path: '/profile'),
     ];
 
@@ -85,16 +85,18 @@ class AppBottomNav extends StatelessWidget {
 
     final items = [
       (icon: Icons.dashboard_outlined, active: Icons.dashboard, label: t('nav.home', lang), path: '/dashboard'),
-      (icon: Icons.mic_outlined, active: Icons.mic, label: t('nav.ai', lang), path: '/ai-viva'),
-      (icon: Icons.edit_outlined, active: Icons.edit, label: t('nav.writing', lang), path: '/writing'),
-      (icon: Icons.emoji_events_outlined, active: Icons.emoji_events, label: t('nav.social', lang), path: '/social'),
+      (icon: Icons.history_edu_outlined, active: Icons.history_edu, label: t('nav.pyq', lang), path: '/pyq'),
+      (icon: Icons.assignment_outlined, active: Icons.assignment, label: t('nav.mock', lang), path: '/mock'),
+      (icon: Icons.live_tv_outlined, active: Icons.live_tv, label: t('nav.live', lang), path: '/live'),
       (icon: Icons.person_outlined, active: Icons.person, label: t('nav.profile', lang), path: '/profile'),
     ];
 
+    // Design-system bottom-nav: white surface, hairline top border, NO
+    // drop shadow. Active tab = primary @ 8.6% tinted pill, radius 14.
     return Container(
       decoration: const BoxDecoration(
         color: AppColors.navyMid,
-        border: Border(top: BorderSide(color: AppColors.border)),
+        border: Border(top: BorderSide(color: AppColors.border, width: 1)),
       ),
       child: SafeArea(
         child: Padding(
@@ -149,7 +151,11 @@ class _NavItemState extends State<_NavItem> with SingleTickerProviderStateMixin 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 140));
+    // Design-system spec: nav-item press scale 1.0 → 0.82 over 140ms.
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 140),
+    );
     _scale = Tween<double>(begin: 1.0, end: 0.82).animate(
       CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
     );
@@ -172,19 +178,23 @@ class _NavItemState extends State<_NavItem> with SingleTickerProviderStateMixin 
           margin: const EdgeInsets.symmetric(horizontal: 2),
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
           decoration: BoxDecoration(
-            color: widget.isActive ? AppColors.saffron.withAlpha(22) : Colors.transparent,
-            borderRadius: BorderRadius.circular(14),
+            // Active pill: primary @ 8.6% alpha, radius 14 (design spec).
+            color: widget.isActive ? AppColors.primary.withAlpha(22) : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadius.xl),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 200),
-                transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
+                transitionBuilder: (child, anim) =>
+                    ScaleTransition(scale: anim, child: child),
                 child: Icon(
                   widget.isActive ? widget.activeIcon : widget.icon,
                   key: ValueKey(widget.isActive),
-                  color: widget.isActive ? AppColors.saffron : AppColors.textMuted,
+                  color: widget.isActive
+                      ? AppColors.primary
+                      : AppColors.textMuted,
                   size: 22,
                 ),
               ),
@@ -193,8 +203,11 @@ class _NavItemState extends State<_NavItem> with SingleTickerProviderStateMixin 
                 duration: const Duration(milliseconds: 200),
                 style: TextStyle(
                   fontSize: 10,
-                  fontWeight: widget.isActive ? FontWeight.w700 : FontWeight.w400,
-                  color: widget.isActive ? AppColors.saffron : AppColors.textMuted,
+                  fontWeight:
+                      widget.isActive ? FontWeight.w700 : FontWeight.w400,
+                  color: widget.isActive
+                      ? AppColors.primary
+                      : AppColors.textMuted,
                 ),
                 child: Text(widget.label),
               ),

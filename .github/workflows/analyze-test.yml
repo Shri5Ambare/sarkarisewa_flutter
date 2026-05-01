@@ -1,0 +1,111 @@
+name: Analyze & Test
+
+on:
+  pull_request:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  analyze:
+    name: Flutter analyze
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Cache pub
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            .dart_tool
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Seed .env (CI placeholder)
+        run: |
+          cat > .env <<'EOF'
+          R2_ENDPOINT=ci.r2.cloudflarestorage.com
+          R2_ACCESS_KEY=ci_placeholder
+          R2_SECRET_KEY=ci_placeholder
+          R2_BUCKET_NAME=ci_placeholder
+          R2_PUBLIC_URL=https://ci.placeholder.r2.dev
+          EOF
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Verify formatting
+        # Non-blocking: print but don't fail. Flip to `--set-exit-if-changed`
+        # once formatting is consistent across the codebase.
+        run: dart format --output=none lib/ test/
+
+      - name: Flutter analyze
+        run: flutter analyze --no-pub
+
+  test:
+    name: Flutter test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Cache pub
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            .dart_tool
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Seed .env (CI placeholder)
+        run: |
+          cat > .env <<'EOF'
+          R2_ENDPOINT=ci.r2.cloudflarestorage.com
+          R2_ACCESS_KEY=ci_placeholder
+          R2_SECRET_KEY=ci_placeholder
+          R2_BUCKET_NAME=ci_placeholder
+          R2_PUBLIC_URL=https://ci.placeholder.r2.dev
+          EOF
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test --no-pub
+
+  functions-lint:
+    name: Cloud Functions syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install function deps
+        working-directory: functions
+        run: npm ci
+
+      - name: Syntax check
+        working-directory: functions
+        # No ESLint config in repo yet — quick syntax-only sanity check.
+        run: node --check index.js

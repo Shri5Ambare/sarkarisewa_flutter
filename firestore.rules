@@ -73,15 +73,20 @@ service cloud.firestore {
       ) || (
         isSignedIn() &&
         request.auth.uid == userId &&
-        // Fixed: Ensure only allowed fields are changed
+        // Whitelist of fields a user is allowed to mutate on their own doc.
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['name', 'email', 'fcmToken', 'coins', 'enrolledCourses', 'lastEnrolledCourseId', 'friends']) &&
-        // Constrain sensitive field changes
+          .hasOnly([
+            'name', 'email', 'qualification', 'fcmToken',
+            'coins', 'enrolledCourses', 'lastEnrolledCourseId', 'friends',
+            'streak', 'longestStreak', 'lastActiveAt',
+            'badges', 'points'
+          ]) &&
+        // Server-controlled fields cannot be tampered with by the client.
         request.resource.data.role == resource.data.role &&
         request.resource.data.tier == resource.data.tier &&
         request.resource.data.writingAccess == resource.data.writingAccess &&
         request.resource.data.groupAccess == resource.data.groupAccess &&
-        // Validate coin spend if coins change
+        // Validate coin spend if coins change.
         (request.resource.data.coins == resource.data.coins || isValidCoinSpend(request, resource))
       );
       allow delete: if isAdmin();
@@ -149,22 +154,14 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // 10. Viva Results
-    // Users can read their own; Admins can read all; users create their own
-    match /viva_results/{resultId} {
-      allow read: if isSignedIn() && (request.auth.uid == resource.data.uid || isAdmin());
-      allow create: if isSignedIn() && request.auth.uid == request.resource.data.uid;
-      allow update, delete: if isAdmin();
-    }
-
-    // 11. News Feed
+    // 10. News Feed
     // Anyone logged in can read; Only Teachers/Admins can write
     match /news/{newsId} {
       allow read: if isSignedIn();
       allow write: if isTeacherOrAdmin();
     }
 
-    // 12. Student Groups
+    // 11. Student Groups
     // Only Teachers/Admins can write; Members/Teacher/Admin can read
     match /groups/{groupId} {
       allow read: if isSignedIn() && (
@@ -175,22 +172,36 @@ service cloud.firestore {
       allow write: if isTeacherOrAdmin();
     }
 
-    // 13. Battles — only involved parties can read/write
+    // 12. Battles — only involved parties can read/write.
+    // Server-controlled fields (winnerUid, isTie, completedAt) cannot be
+    // mutated by the client — the `onBattleCompleted` Cloud Function owns
+    // them. Clients can only update score fields and the status transition.
     match /battles/{battleId} {
       allow read: if isSignedIn() && (
         request.auth.uid == resource.data.initiatorUid ||
         request.auth.uid == resource.data.opponentUid ||
         isAdmin()
       );
-      allow create: if isSignedIn();
+      allow create: if isSignedIn() &&
+        request.auth.uid == request.resource.data.initiatorUid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.winnerUid == null &&
+        request.resource.data.initiatorScore == null &&
+        request.resource.data.opponentScore == null;
       allow update: if isSignedIn() && (
         request.auth.uid == resource.data.initiatorUid ||
         request.auth.uid == resource.data.opponentUid
-      );
+      ) &&
+        // Server-only fields cannot be touched by clients.
+        request.resource.data.winnerUid   == resource.data.winnerUid &&
+        (!('isTie' in request.resource.data) ||
+          request.resource.data.isTie == resource.data.get('isTie', false)) &&
+        (!('completedAt' in request.resource.data) ||
+          request.resource.data.completedAt == resource.data.get('completedAt', null));
       allow delete: if isAdmin();
     }
 
-    // 14. Friend Requests — only involved parties can write
+    // 13. Friend Requests — only involved parties can write
     match /friend_requests/{reqId} {
       allow read: if isSignedIn() && (
         request.auth.uid == resource.data.fromUid ||
@@ -204,16 +215,52 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // 15. Leaderboard
+    // 14. Leaderboard
     match /leaderboard/{docId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
 
-    // 16. Activity Logs
+    // 15. Activity Logs
     match /activity_logs/{logId} {
       allow read: if isTeacherOrAdmin();
       allow create: if isSignedIn();
+    }
+
+    // 16. PYQ Papers — any signed-in user can read; teachers/admins can write
+    match /pyqs/{pyqId} {
+      allow read: if isSignedIn();
+      allow write: if isTeacherOrAdmin();
+    }
+
+    // 17. Live Classes — any signed-in user can read; teachers/admins can write
+    match /live_classes/{classId} {
+      allow read: if isSignedIn();
+      allow write: if isTeacherOrAdmin();
+    }
+
+    // 18. Course Progress — owner-only; no cross-user access
+    match /users/{userId}/courseProgress/{courseId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // 19. Admin audit logs — append-only, admins/super-admins read.
+    // Anyone with an admin-tier role can write a single record (the
+    // adminUid must match their own uid). Updates and deletes are
+    // forbidden — the log is immutable history.
+    match /admin_audit_logs/{logId} {
+      allow read: if isAdmin() || isSuperAdmin();
+      allow create: if isSignedIn() &&
+        (isAdmin() || isSuperAdmin() || isTeacherOrAdmin()) &&
+        request.resource.data.adminUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // 20. Daily aggregates — read-only by admins; only writable by
+    // Cloud Functions (which use the Admin SDK and bypass these rules).
+    match /daily_aggregates/{day} {
+      allow read: if isAdmin() || isSuperAdmin();
+      allow write: if false;
     }
 
     // Default lockdown fallback

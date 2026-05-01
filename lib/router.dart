@@ -7,7 +7,6 @@ import 'screens/signup_screen.dart';
 import 'screens/forgot_password_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/course_detail_screen.dart';
-import 'screens/ai_viva_screen.dart';
 import 'screens/writing_screen.dart';
 import 'screens/social_screen.dart';
 import 'screens/profile_screen.dart';
@@ -21,6 +20,9 @@ import 'screens/battle_lobby_screen.dart';
 import 'screens/client_access_blocked_screen.dart';
 import 'screens/mock_test_screen.dart';
 import 'screens/mock_test_result_screen.dart';
+import 'screens/pyq_list_screen.dart';
+import 'screens/mock_index_screen.dart';
+import 'screens/live_screen.dart';
 
 import 'package:firebase_analytics/firebase_analytics.dart';
 
@@ -73,7 +75,6 @@ GoRouter buildRouter(AuthProvider authProvider) {
       GoRoute(path: '/forgot-password', builder: (ctx, _) => const ForgotPasswordScreen()),
       GoRoute(path: '/dashboard', builder: (ctx, _) => const DashboardScreen()),
       GoRoute(path: '/course/:id', builder: (ctx, s) => CourseDetailScreen(courseId: s.pathParameters['id']!)),
-      GoRoute(path: '/ai-viva', builder: (ctx, _) => const AIVivaScreen()),
       GoRoute(path: '/writing', builder: (ctx, _) => const WritingScreen()),
       GoRoute(path: '/social', builder: (ctx, _) => const SocialScreen()),
       GoRoute(path: '/profile', builder: (ctx, _) => const ProfileScreen()),
@@ -111,6 +112,20 @@ GoRouter buildRouter(AuthProvider authProvider) {
         },
       ),
       GoRoute(path: '/client-access-blocked', builder: (ctx, _) => const ClientAccessBlockedScreen()),
+      GoRoute(path: '/pyq', builder: (ctx, _) => const PyqListScreen()),
+      GoRoute(path: '/mock', builder: (ctx, _) => const MockIndexScreen()),
+      GoRoute(path: '/live', builder: (ctx, _) => const LiveScreen()),
+      GoRoute(
+        path: '/pyq/:id',
+        builder: (ctx, s) {
+          final extra = s.extra as Map<String, dynamic>?;
+          return MockTestScreen(
+            testId: s.pathParameters['id']!,
+            testInfo: extra,
+            source: 'pyq',
+          );
+        },
+      ),
     ],
   );
 }

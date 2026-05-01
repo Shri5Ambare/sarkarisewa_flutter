@@ -16,7 +16,18 @@ class MockTestScreen extends StatefulWidget {
   final Map<String, dynamic>? testInfo;
   final String testId;
   final String? battleId;
-  const MockTestScreen({super.key, this.testInfo, required this.testId, this.battleId});
+
+  /// Either `'mock'` (default) or `'pyq'`. Determines which Firestore
+  /// collection to load from and whether result is submitted to scoreboards.
+  final String source;
+
+  const MockTestScreen({
+    super.key,
+    this.testInfo,
+    required this.testId,
+    this.battleId,
+    this.source = 'mock',
+  });
 
   @override
   State<MockTestScreen> createState() => _MockTestScreenState();
@@ -46,6 +57,8 @@ class _MockTestScreenState extends State<MockTestScreen> {
     try {
       if (widget.testInfo != null) {
         _testData = widget.testInfo;
+      } else if (widget.source == 'pyq') {
+        _testData = await _db.getPyqById(widget.testId);
       } else {
         _testData = await _db.getMockTestById(widget.testId);
       }
@@ -108,18 +121,18 @@ class _MockTestScreenState extends State<MockTestScreen> {
         final db = FirestoreService();
         if (widget.battleId != null) {
           await db.submitBattleScore(widget.battleId!, uiUid, score);
-        } else {
+        } else if (widget.source == 'mock') {
           final loc = await LocationService.getCurrentLocation();
           await db.submitTestResult(uiUid, _testData!['id'], _testData!['courseId'], score, _questions.length, location: loc);
         }
       }
-      
+
       if (_testData != null) {
         await FirebaseAnalytics.instance.logEvent(
-          name: 'test_completed',
+          name: widget.source == 'pyq' ? 'pyq_completed' : 'test_completed',
           parameters: {
             'test_id': _testData!['id'],
-            'course_id': _testData!['courseId'],
+            if (_testData!['courseId'] != null) 'course_id': _testData!['courseId'],
             'score': score,
             'total_questions': _questions.length,
             'time_taken_seconds': (_testData!['durationMinutes']! * 60) - _timeRemaining,

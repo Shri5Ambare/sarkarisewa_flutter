@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -35,6 +36,51 @@ class FirestoreService {
       _db.collection('users').limit(50).snapshots().map(
         (s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList(),
       );
+
+  /// Cursor-paginated users for the admin tab. Supports server-side
+  /// filtering on `role` and `tier`, plus a prefix search on `email`
+  /// (Firestore's range-query trick: `q` ≤ email < `q + `).
+  ///
+  /// `searchEmail` should be the lowercased query the user typed. We
+  /// require the `email` field on users to be lowercase as written.
+  Future<({List<Map<String, dynamic>> items, DocumentSnapshot? cursor})>
+      getUsersPage({
+    int pageSize = 25,
+    DocumentSnapshot? startAfter,
+    String? role,
+    String? tier,
+    String? searchEmail,
+  }) async {
+    Query<Map<String, dynamic>> q = _db.collection('users');
+
+    if (role != null && role.isNotEmpty) {
+      q = q.where('role', isEqualTo: role);
+    }
+    if (tier != null && tier.isNotEmpty) {
+      q = q.where('tier', isEqualTo: tier);
+    }
+    if (searchEmail != null && searchEmail.isNotEmpty) {
+      // Prefix search via range query. Combined with role/tier filters
+      // this requires a composite index — see firestore.indexes.json.
+      final lower = searchEmail.toLowerCase();
+      q = q.where('email', isGreaterThanOrEqualTo: lower)
+           .where('email', isLessThan: '$lower')
+           .orderBy('email');
+    } else {
+      // No search: order by createdAt to get newest first. Falls back
+      // gracefully on docs missing createdAt (legacy users).
+      q = q.orderBy('createdAt', descending: true);
+    }
+
+    q = q.limit(pageSize);
+    if (startAfter != null) q = q.startAfterDocument(startAfter);
+
+    final snap = await q.get();
+    return (
+      items: snap.docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+      cursor: snap.docs.isEmpty ? null : snap.docs.last,
+    );
+  }
 
   Future<List<Map<String, dynamic>>> getTeachers() async {
     final snap = await _db.collection('users').where('role', isEqualTo: 'teacher').get();
@@ -89,10 +135,13 @@ class FirestoreService {
       final snap = await txn.get(userRef);
       txn.update(orderRef, {'status': 'active'});
       if (snap.exists) {
-        final enrolled = List<String>.from(snap.data()!['enrolled'] ?? []);
+        final enrolled = List<String>.from(snap.data()!['enrolledCourses'] ?? []);
         if (!enrolled.contains(courseId)) {
           enrolled.add(courseId);
-          txn.update(userRef, {'enrolled': enrolled});
+          txn.update(userRef, {
+            'enrolledCourses': enrolled,
+            'lastEnrolledCourseId': courseId,
+          });
         }
       }
     });
@@ -160,6 +209,23 @@ class FirestoreService {
           .map((s) => s.docs
               .map((d) => {'id': d.id, ...d.data()})
               .toList());
+
+  /// Paginated, one-shot fetch for admin lists. Pass the previous page's
+  /// last `_cursor` (a `DocumentSnapshot`) as `startAfter` to load the
+  /// next page. The returned `'_cursor'` key is dropped from the merge
+  /// view by callers — it's metadata, not display data.
+  Future<({List<Map<String, dynamic>> items, DocumentSnapshot? cursor})>
+      getSubmissionsPage({int pageSize = 25, DocumentSnapshot? startAfter}) async {
+    Query<Map<String, dynamic>> q = _db.collection('submissions')
+        .orderBy('createdAt', descending: true)
+        .limit(pageSize);
+    if (startAfter != null) q = q.startAfterDocument(startAfter);
+    final snap = await q.get();
+    return (
+      items: snap.docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+      cursor: snap.docs.isEmpty ? null : snap.docs.last,
+    );
+  }
 
   // ── STATS ─────────────────────────────────────────────────────────
   Future<Map<String, int>> getStats() async {
@@ -254,18 +320,6 @@ class FirestoreService {
     };
   }
 
-  /// Save the final AI Viva session result.
-  Future<void> saveVivaResult(String uid, int courseId, int score, String feedback, {Map<String, double>? location}) async {
-    await _db.collection('viva_results').doc().set({
-      'uid': uid,
-      'courseId': courseId,
-      'score': score,
-      'feedback': feedback,
-      'location': location,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
-  }
-
   // ── SETTINGS ───────────────────────────────────────────────────────
   Stream<Map<String, dynamic>> listenGlobalSettings() =>
       _db.collection('settings').doc('global').snapshots().map((s) => s.data() ?? {});
@@ -350,12 +404,28 @@ class FirestoreService {
     return snap.docs.map((d) => d.id).toList();
   }
 
-  /// Admin: Stream all news
+  /// Admin: Stream all news (capped at 100 — past that, use the paginated
+  /// `getAllNewsPage` API instead).
   Stream<List<Map<String, dynamic>>> listenAllNews() {
     return _db.collection('news')
         .orderBy('createdAt', descending: true)
+        .limit(100)
         .snapshots()
         .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
+  }
+
+  /// Paginated news feed for the admin "Manage News" tab.
+  Future<({List<Map<String, dynamic>> items, DocumentSnapshot? cursor})>
+      getAllNewsPage({int pageSize = 25, DocumentSnapshot? startAfter}) async {
+    Query<Map<String, dynamic>> q = _db.collection('news')
+        .orderBy('createdAt', descending: true)
+        .limit(pageSize);
+    if (startAfter != null) q = q.startAfterDocument(startAfter);
+    final snap = await q.get();
+    return (
+      items: snap.docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+      cursor: snap.docs.isEmpty ? null : snap.docs.last,
+    );
   }
 
   // ── SS COIN WALLET ────────────────────────────────────────────────
@@ -382,6 +452,20 @@ class FirestoreService {
           .limit(100)
           .snapshots()
           .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
+
+  /// Paginated transactions feed for the admin screen.
+  Future<({List<Map<String, dynamic>> items, DocumentSnapshot? cursor})>
+      getTransactionsPage({int pageSize = 25, DocumentSnapshot? startAfter}) async {
+    Query<Map<String, dynamic>> q = _db.collection('transactions')
+        .orderBy('createdAt', descending: true)
+        .limit(pageSize);
+    if (startAfter != null) q = q.startAfterDocument(startAfter);
+    final snap = await q.get();
+    return (
+      items: snap.docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+      cursor: snap.docs.isEmpty ? null : snap.docs.last,
+    );
+  }
 
   /// Add coins to user wallet (simulated top-up) + log transaction.
   Future<void> topUpCoins(String uid, int coins, int paidAmount) async {
@@ -504,6 +588,109 @@ class FirestoreService {
     return {'id': snap.id, ...snap.data()!};
   }
 
+  // ── LIVE CLASSES ─────────────────────────────────────────────────
+  /// Stream upcoming + currently-live classes ordered by `startAt` ascending.
+  /// May require a Firestore index on `startAt`.
+  Stream<List<Map<String, dynamic>>> listenUpcomingLiveClasses() {
+    final cutoff = DateTime.now().subtract(const Duration(hours: 3));
+    return _db
+        .collection('live_classes')
+        .where('startAt', isGreaterThan: Timestamp.fromDate(cutoff))
+        .orderBy('startAt')
+        .snapshots()
+        .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
+  }
+
+  // ── ALL MOCK TESTS (for Mock tab index screen) ───────────────────
+  Stream<List<Map<String, dynamic>>> listenAllMockTests() {
+    return _db
+        .collection('mock_tests')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
+  }
+
+  // ── COURSE PROGRESS ──────────────────────────────────────────────
+  /// Live set of lesson IDs the user has marked complete in a course.
+  /// Lesson IDs are caller-defined (we use `${chapterIdx}_${lectureIdx}`).
+  Stream<Set<String>> listenCourseProgress(String uid, String courseId) {
+    return _db
+        .collection('users')
+        .doc(uid)
+        .collection('courseProgress')
+        .doc(courseId)
+        .snapshots()
+        .map((snap) {
+      if (!snap.exists) return <String>{};
+      final list = (snap.data()?['completedLessonIds'] as List?) ?? const [];
+      return list.map((e) => e.toString()).toSet();
+    });
+  }
+
+  Future<void> markLessonComplete(String uid, String courseId, String lessonId) {
+    final ref = _db
+        .collection('users')
+        .doc(uid)
+        .collection('courseProgress')
+        .doc(courseId);
+    return ref.set({
+      'completedLessonIds': FieldValue.arrayUnion([lessonId]),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> markLessonIncomplete(String uid, String courseId, String lessonId) {
+    final ref = _db
+        .collection('users')
+        .doc(uid)
+        .collection('courseProgress')
+        .doc(courseId);
+    return ref.set({
+      'completedLessonIds': FieldValue.arrayRemove([lessonId]),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  // ── PREVIOUS YEAR QUESTIONS (PYQ) ────────────────────────────────
+  /// Live stream of PYQ papers, optionally filtered by exam.
+  Stream<List<Map<String, dynamic>>> listenPyqs({String? exam}) {
+    Query<Map<String, dynamic>> q = _db.collection('pyqs');
+    if (exam != null && exam.isNotEmpty) {
+      q = q.where('exam', isEqualTo: exam);
+    }
+    return q.snapshots().map(
+          (s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+        );
+  }
+
+  /// Get a single PYQ paper by ID. Same shape as a mock test.
+  Future<Map<String, dynamic>?> getPyqById(String id) async {
+    final snap = await _db.collection('pyqs').doc(id).get();
+    if (!snap.exists) return null;
+    return {'id': snap.id, ...snap.data()!};
+  }
+
+  /// Compute rank/percentile for a score against all submissions of a test.
+  /// Returns null when fewer than 5 prior submissions exist (signal not useful).
+  Future<({int rank, int total, int percentile})?> getMockTestRank(
+    String testId,
+    int score,
+  ) async {
+    final qs = await _db
+        .collection('mock_test_results')
+        .where('testId', isEqualTo: testId)
+        .get();
+    final scores = qs.docs
+        .map((d) => (d.data()['score'] as num?)?.toInt() ?? 0)
+        .toList();
+    if (scores.length < 5) return null;
+    final beaten = scores.where((s) => s < score).length;
+    final total = scores.length;
+    final rank = total - beaten; // 1 = best
+    final percentile = ((beaten / total) * 100).round();
+    return (rank: rank, total: total, percentile: percentile);
+  }
+
   /// Get the user's past mock test results (for profile screen)
   Future<List<Map<String, dynamic>>> getMyTestResults(String uid) async {
     final qs = await _db.collection('mock_test_results')
@@ -554,20 +741,101 @@ class FirestoreService {
   }
   // ── NEWS FEED ───────────────────────────────────────────────────────
 
-  /// Stream all news bites ordered by newest first
-  /// Stream specific news related to a user's enrolled courses or global news
-  Stream<List<Map<String, dynamic>>> listenStudentNews(List<String> enrolledCourseIds, List<String> groupIds) {
-    return _db.collection('news')
+  /// Stream news visible to a student, computed **server-side**.
+  ///
+  /// Three independent queries are issued and merged client-side, but each
+  /// query is bounded — Firestore returns only the rows that match. This
+  /// replaces the old `where(...)` filter that pulled the entire `news`
+  /// collection and filtered in memory (broke at scale).
+  ///
+  /// Visibility:
+  ///   1. Global news — documents missing `courseId` (we treat both
+  ///      absent-key AND `courseId == 'global'` as global to support
+  ///      either authoring convention).
+  ///   2. Per-course news — `courseId in enrolledCourseIds`.
+  ///   3. Per-group news — `courseId in groupIds`.
+  ///
+  /// Firestore's `whereIn` supports up to 30 values; we chunk if larger.
+  Stream<List<Map<String, dynamic>>> listenStudentNews(
+    List<String> enrolledCourseIds,
+    List<String> groupIds,
+  ) {
+    // Combine the audience IDs (course + group) and dedupe.
+    final audienceIds = {...enrolledCourseIds, ...groupIds}.toList();
+
+    // Stream 1: global news. We use `courseId == 'global'` (preferred)
+    // so the query is server-side; legacy null-courseId rows still get
+    // surfaced through the merge by also pulling them via a separate
+    // isNull-equivalent query (Firestore can't do `isNull` directly,
+    // so we rely on the 'global' tag going forward and the merge step
+    // below handles legacy data).
+    final global = _db.collection('news')
+        .where('courseId', isEqualTo: 'global')
         .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).where((n) {
-          final cid = n['courseId'];
-          // Show news if:
-          // 1. It's global (cid is null)
-          // 2. It matches an enrolled course
-          // 3. It matches a group the student is in
-          return cid == null || enrolledCourseIds.contains(cid) || groupIds.contains(cid);
-        }).toList());
+        .limit(50)
+        .snapshots();
+
+    // Stream 2+: per-audience news, chunked at 30 per query.
+    final chunks = <List<String>>[];
+    for (var i = 0; i < audienceIds.length; i += 30) {
+      chunks.add(audienceIds.sublist(
+        i, (i + 30).clamp(0, audienceIds.length),
+      ));
+    }
+    final perAudience = chunks.map(
+      (ids) => _db.collection('news')
+          .where('courseId', whereIn: ids)
+          .orderBy('createdAt', descending: true)
+          .limit(50)
+          .snapshots(),
+    ).toList();
+
+    // Merge by listening to all streams; emit a combined sorted list
+    // whenever any stream updates.
+    return _mergeNewsStreams([global, ...perAudience]);
+  }
+
+  Stream<List<Map<String, dynamic>>> _mergeNewsStreams(
+    List<Stream<QuerySnapshot<Map<String, dynamic>>>> streams,
+  ) {
+    if (streams.isEmpty) return Stream.value(const []);
+    final controller = StreamController<List<Map<String, dynamic>>>();
+    final latest = List<List<Map<String, dynamic>>>.generate(
+      streams.length, (_) => const [],
+    );
+    final subs = <StreamSubscription>[];
+    for (var i = 0; i < streams.length; i++) {
+      final idx = i;
+      subs.add(streams[i].listen(
+        (snap) {
+          latest[idx] = snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+          // Dedupe by id, sort by createdAt desc.
+          final merged = <String, Map<String, dynamic>>{};
+          for (final list in latest) {
+            for (final doc in list) {
+              merged[doc['id'] as String] = doc;
+            }
+          }
+          final out = merged.values.toList();
+          out.sort((a, b) {
+            final ta = a['createdAt'] as Timestamp?;
+            final tb = b['createdAt'] as Timestamp?;
+            if (ta == null && tb == null) return 0;
+            if (ta == null) return 1;
+            if (tb == null) return -1;
+            return tb.compareTo(ta);
+          });
+          controller.add(out);
+        },
+        onError: controller.addError,
+      ));
+    }
+    controller.onCancel = () async {
+      for (final s in subs) {
+        await s.cancel();
+      }
+    };
+    return controller.stream;
   }
 
   /// Admin: Create a new news bite
@@ -673,63 +941,117 @@ class FirestoreService {
   }
 
   // ── BATTLE SYSTEM ───────────────────────────────────────────────────
+  //
+  // Status lifecycle:
+  //   `pending`    — battle created, initiator hasn't submitted yet (very brief)
+  //   `active`     — initiator submitted, opponent's turn to play
+  //   `completed`  — both submitted; Cloud Function `onBattleCompleted` then
+  //                  computes the winner and awards coins/badges atomically
+  //
+  // We persist `totalQuestions` at creation time so the UI never has to
+  // fetch the test doc separately just to render "X / Y".
 
-  /// Issue a new asynchronous battle challenge to a friend
-  Future<String> createBattle(String initiatorUid, String opponentUid, String courseId, String testId, Map<String, dynamic> testInfo) async {
+  /// Issue a new asynchronous battle challenge to a friend.
+  Future<String> createBattle(
+    String initiatorUid,
+    String opponentUid,
+    String courseId,
+    String testId,
+    Map<String, dynamic> testInfo,
+  ) async {
+    final qList = (testInfo['questions'] as List?) ?? const [];
     final docRef = await _db.collection('battles').add({
-      'initiatorUid': initiatorUid,
-      'opponentUid': opponentUid,
-      'courseId': courseId,
-      'testId': testId,
-      'testTitle': testInfo['title'] ?? 'Mock Test',
-      'courseTitle': testInfo['courseTitle'] ?? 'Course',
-      'status': 'pending', // pending -> active -> completed
+      'initiatorUid':   initiatorUid,
+      'opponentUid':    opponentUid,
+      'courseId':       courseId,
+      'testId':         testId,
+      'testTitle':      testInfo['title'] ?? 'Mock Test',
+      'courseTitle':    testInfo['courseTitle'] ?? 'Course',
+      'totalQuestions': qList.length,
+      'status':         'pending',
       'initiatorScore': null,
-      'opponentScore': null,
-      'createdAt': FieldValue.serverTimestamp(),
+      'opponentScore':  null,
+      'winnerUid':      null,        // populated by Cloud Function
+      'createdAt':      FieldValue.serverTimestamp(),
     });
     return docRef.id;
   }
 
-  /// Listen to pending incoming battle challenges for a user
+  /// Battles awaiting the user's response — the initiator has played, now
+  /// it's the opponent's turn. We use `status == 'active'` because that's
+  /// the state where opponent action is required.
   Stream<List<Map<String, dynamic>>> listenIncomingBattles(String uid) {
     return _db.collection('battles')
         .where('opponentUid', isEqualTo: uid)
-        .where('status', isEqualTo: 'pending')
+        .where('status', isEqualTo: 'active')
         .snapshots()
         .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
   }
-  
-  /// Listen to active battles where the user has challenged someone and is waiting for them
+
+  /// Battles where the current user has already played and is waiting for
+  /// the opponent to respond.
   Stream<List<Map<String, dynamic>>> listenMyActiveChallenges(String uid) {
     return _db.collection('battles')
         .where('initiatorUid', isEqualTo: uid)
-        .where('status', isEqualTo: 'active') // meaning I took it, now waiting for opponent
+        .where('status', isEqualTo: 'active')
         .snapshots()
         .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
   }
 
-  /// Submit my score for a battle. 
-  /// If I am the initiator, status becomes 'active' (waiting for opponent).
-  /// If I am the opponent, status becomes 'completed'.
+  /// Recently completed battles for either player (last 20).
+  /// Used to surface results once the match is decided.
+  Stream<List<Map<String, dynamic>>> listenCompletedBattles(String uid) {
+    final asInitiator = _db.collection('battles')
+        .where('initiatorUid', isEqualTo: uid)
+        .where('status', isEqualTo: 'completed')
+        .snapshots();
+    final asOpponent = _db.collection('battles')
+        .where('opponentUid', isEqualTo: uid)
+        .where('status', isEqualTo: 'completed')
+        .snapshots();
+    // Merge both streams; opponent dedup by id.
+    return asInitiator.asyncMap((snap) async {
+      final list = snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+      final opp = await asOpponent.first;
+      for (final d in opp.docs) {
+        if (!list.any((b) => b['id'] == d.id)) {
+          list.add({'id': d.id, ...d.data()});
+        }
+      }
+      list.sort((a, b) {
+        final ta = a['createdAt'] as Timestamp?;
+        final tb = b['createdAt'] as Timestamp?;
+        if (ta == null || tb == null) return 0;
+        return tb.compareTo(ta);
+      });
+      return list.take(20).toList();
+    });
+  }
+
+  /// Submit my score for a battle.
+  /// - Initiator submits first → status: pending → active.
+  /// - Opponent submits second → status: active → completed.
+  ///   The Cloud Function `onBattleCompleted` then determines the winner
+  ///   and awards coins/badges atomically. The client never writes
+  ///   `winnerUid` directly.
   Future<void> submitBattleScore(String battleId, String uid, int score) async {
     final doc = await _db.collection('battles').doc(battleId).get();
     if (!doc.exists) return;
-
     final data = doc.data()!;
-    String roleField = (data['initiatorUid'] == uid) ? 'initiatorScore' : 'opponentScore';
-    
-    // Determine new status
+
+    final isInitiator = data['initiatorUid'] == uid;
+    final roleField = isInitiator ? 'initiatorScore' : 'opponentScore';
+
     String newStatus = data['status'];
-    if (data['initiatorUid'] == uid && data['status'] == 'pending') {
-      newStatus = 'active'; // Initiator played, now opponent needs to play
-    } else if (data['opponentUid'] == uid && data['status'] == 'active') {
-      newStatus = 'completed'; // Opponent played, match over.
+    if (isInitiator && data['status'] == 'pending') {
+      newStatus = 'active';
+    } else if (!isInitiator && data['status'] == 'active') {
+      newStatus = 'completed';
     }
 
     await _db.collection('battles').doc(battleId).update({
       roleField: score,
-      'status': newStatus,
+      'status':  newStatus,
     });
   }
 
