@@ -12,6 +12,7 @@ import '../services/firestore_service.dart';
 import '../l10n/strings.dart';
 import '../theme.dart';
 import '../widgets/app_button.dart';
+import '../widgets/empty_state.dart';
 
 class WritingScreen extends StatefulWidget {
   const WritingScreen({super.key});
@@ -306,9 +307,11 @@ class _WritingScreenState extends State<WritingScreen> {
                   }
                   final subs = snap.data ?? [];
                   if (subs.isEmpty) {
-                    return const Padding(
+                    return const EmptyState(
+                      emoji: '📝',
+                      title: 'No submissions yet',
+                      message: 'Upload your first answer above to get AI-powered feedback.',
                       padding: EdgeInsets.all(20),
-                      child: Text('No submissions yet.', style: TextStyle(color: AppColors.textMuted), textAlign: TextAlign.center),
                     );
                   }
                   return Column(

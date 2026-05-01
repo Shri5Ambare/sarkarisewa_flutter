@@ -5,6 +5,7 @@ import '../providers/auth_provider.dart';
 import '../services/firestore_service.dart';
 import '../theme.dart';
 import '../widgets/app_button.dart';
+import '../widgets/empty_state.dart';
 
 class FriendsScreen extends StatefulWidget {
   const FriendsScreen({super.key});
@@ -241,8 +242,10 @@ class _MyFriendsTab extends StatelessWidget {
         if (profileSnap.hasError) return const Center(child: Text('Failed to load friends', style: TextStyle(color: AppColors.ruby)));
         final profiles = profileSnap.data ?? [];
         if (profiles.isEmpty) {
-          return const Center(
-            child: Text('You have no friends yet. Go add some!', style: TextStyle(color: AppColors.textMuted)),
+          return const EmptyState(
+            emoji: '👋',
+            title: 'No friends yet',
+            message: 'Add classmates to challenge them in 1-on-1 quiz battles.',
           );
         }
         return ListView.builder(

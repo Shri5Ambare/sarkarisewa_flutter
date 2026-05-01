@@ -12,6 +12,7 @@ import '../widgets/responsive_scaffold.dart';
 import '../widgets/app_button.dart';
 import '../widgets/tier_badge.dart';
 import '../widgets/badge_display.dart';
+import '../widgets/empty_state.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -280,7 +281,11 @@ class _ProfileScreenState extends State<ProfileScreen> with SingleTickerProvider
 
                 // ── Enrolled Courses ──
                 enrolled.isEmpty
-                  ? const Center(child: Text('No enrolled courses yet.', style: TextStyle(color: AppColors.textMuted)))
+                  ? const EmptyState(
+                      emoji: '📚',
+                      title: 'No enrolled courses',
+                      message: 'Browse the dashboard to enroll in your first course.',
+                    )
                   : ListView.builder(
                       padding: const EdgeInsets.all(16),
                       itemCount: enrolled.length,

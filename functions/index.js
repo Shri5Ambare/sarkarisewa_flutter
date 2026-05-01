@@ -4,11 +4,15 @@
 // 1. sendPushNotification (callable, admin-only) — broadcast to all_users
 // 2. onBattleCompleted    (Firestore trigger)   — decide winner, award coins
 // 3. onPaymentApproved    (Firestore trigger)   — server-side coin top-up
-//                                                 when an admin marks a
-//                                                 payment_request approved
+// 4. expireStaleBattles   (scheduled, every 6h) — cancel `active` battles
+//                                                 older than 7 days
+// 5. dailyStreakReminder  (scheduled, 13:15 UTC = 19:00 NPT) — push to
+//                                                 users who haven't
+//                                                 opened the app today
 // ═══════════════════════════════════════════════════════════════════════
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onDocumentUpdated }  = require("firebase-functions/v2/firestore");
+const { onSchedule }         = require("firebase-functions/v2/scheduler");
 const { logger }             = require("firebase-functions");
 const admin                  = require("firebase-admin");
 
@@ -274,5 +278,180 @@ exports.onPaymentApproved = onDocumentUpdated(
       title: "Coins credited 🪙",
       body:  `+${coins} SS Coins for your top-up of Rs ${amount} have been added to your wallet.`,
     });
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════
+// 4. expireStaleBattles — cancel battles the opponent never played
+// ─────────────────────────────────────────────────────────────────────
+// Runs every 6 hours. Finds battles in `active` status (initiator played,
+// opponent hasn't) older than 7 days and flips them to `expired`. Notifies
+// the initiator that the opponent failed to respond and refunds them a
+// small participation reward (10 coins) so the battle wasn't wasted.
+// ═══════════════════════════════════════════════════════════════════════
+exports.expireStaleBattles = onSchedule(
+  {
+    region:   "asia-south1",
+    schedule: "every 6 hours",
+    timeZone: "Asia/Kathmandu",
+  },
+  async () => {
+    const cutoff = admin.firestore.Timestamp.fromDate(
+      new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    );
+
+    const snap = await db.collection("battles")
+      .where("status",    "==", "active")
+      .where("createdAt", "<",  cutoff)
+      .limit(200) // safety cap; future runs will sweep the rest
+      .get();
+
+    if (snap.empty) {
+      logger.info("expireStaleBattles: nothing to do.");
+      return;
+    }
+
+    logger.info(`expireStaleBattles: expiring ${snap.size} battle(s).`);
+
+    // Process in chunks of ~50 because we're doing a few writes per battle.
+    const refundCoins = 10;
+    let processed = 0;
+
+    for (const doc of snap.docs) {
+      const data = doc.data();
+      const initiatorUid = data.initiatorUid;
+      try {
+        await db.runTransaction(async (tx) => {
+          tx.update(doc.ref, {
+            status:    "expired",
+            expiredAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          if (initiatorUid) {
+            tx.update(db.collection("users").doc(initiatorUid), {
+              coins: admin.firestore.FieldValue.increment(refundCoins),
+            });
+            tx.set(db.collection("transactions").doc(), {
+              uid:         initiatorUid,
+              type:        "battle_expired",
+              coins:       refundCoins,
+              amount:      0,
+              description: `Battle expired (opponent didn't play): +${refundCoins} coins refund`,
+              createdAt:   admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+        });
+        if (initiatorUid) {
+          await sendFcmToUser(initiatorUid, {
+            title: "Battle expired ⌛",
+            body:  `Your opponent didn't play in time. +${refundCoins} coins refunded.`,
+          });
+        }
+        processed++;
+      } catch (err) {
+        logger.warn("expireStaleBattles: failed for battle", {
+          battleId: doc.id, err: err.message,
+        });
+      }
+    }
+
+    logger.info(`expireStaleBattles: completed ${processed}/${snap.size}.`);
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════
+// 5. dailyStreakReminder — nudge users who haven't opened today
+// ─────────────────────────────────────────────────────────────────────
+// Runs once daily at 19:00 Asia/Kathmandu (13:15 UTC). Targets users who:
+//   - have a streak >= 1 (so we're protecting an existing streak)
+//   - have an `fcmToken` (otherwise the push has nowhere to go)
+//   - whose `lastActiveAt` is before today's local midnight (i.e. they
+//     haven't opened the app yet today)
+// Sends a "Don't break your streak!" push.
+//
+// Performance: batched in chunks of 500 reads, sends pushes in parallel
+// with a max-concurrency of 50. Streaks longer than 1 are framed as
+// "you're on a 7-day run!" — anchoring the loss aversion.
+// ═══════════════════════════════════════════════════════════════════════
+exports.dailyStreakReminder = onSchedule(
+  {
+    region:   "asia-south1",
+    schedule: "0 19 * * *",
+    timeZone: "Asia/Kathmandu",
+  },
+  async () => {
+    // Today's local midnight (Asia/Kathmandu = UTC+5:45). Convert via
+    // the same timezone the schedule fires in.
+    const now = new Date();
+    const offsetMs = 5.75 * 60 * 60 * 1000;
+    const local = new Date(now.getTime() + offsetMs);
+    const todayStart = new Date(Date.UTC(
+      local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()
+    ) - offsetMs);
+    const todayStartTs = admin.firestore.Timestamp.fromDate(todayStart);
+
+    // Two-step query: streak > 0, and lastActiveAt < todayStart.
+    // Firestore can't combine these with disjunctions, so we query by
+    // streak > 0 and filter lastActiveAt client-side. Cap reads.
+    const snap = await db.collection("users")
+      .where("streak", ">=", 1)
+      .limit(2000)
+      .get();
+
+    if (snap.empty) return;
+
+    const candidates = snap.docs.filter((d) => {
+      const data = d.data();
+      const last = data.lastActiveAt;
+      if (!data.fcmToken) return false;
+      if (!last) return false;
+      return last.toMillis() < todayStartTs.toMillis();
+    });
+
+    if (candidates.length === 0) {
+      logger.info("dailyStreakReminder: no users at risk.");
+      return;
+    }
+
+    logger.info(`dailyStreakReminder: pinging ${candidates.length} users.`);
+
+    // Send in parallel batches of 50 to avoid FCM rate limits.
+    const concurrency = 50;
+    let sent = 0;
+    for (let i = 0; i < candidates.length; i += concurrency) {
+      const chunk = candidates.slice(i, i + concurrency);
+      await Promise.all(chunk.map(async (doc) => {
+        const data   = doc.data();
+        const streak = (data.streak || 1) | 0;
+        const name   = (data.name || "").split(" ")[0] || "there";
+        try {
+          await admin.messaging().send({
+            token: data.fcmToken,
+            notification: {
+              title: `Don't break your ${streak}-day streak 🔥`,
+              body:  streak === 1
+                ? `Hey ${name}, open SarkariSewa today to keep going!`
+                : `Hey ${name}, you're on a ${streak}-day run — one quick lesson keeps it alive.`,
+            },
+            android: { priority: "high" },
+          });
+          sent++;
+        } catch (err) {
+          // Token may be stale; remove it so we don't keep retrying.
+          if (
+            err.code === "messaging/registration-token-not-registered" ||
+            err.code === "messaging/invalid-registration-token"
+          ) {
+            await doc.ref.update({ fcmToken: admin.firestore.FieldValue.delete() })
+              .catch(() => {});
+          } else {
+            logger.warn("dailyStreakReminder: send failed", {
+              uid: doc.id, err: err.message,
+            });
+          }
+        }
+      }));
+    }
+
+    logger.info(`dailyStreakReminder: sent ${sent}/${candidates.length}.`);
   }
 );

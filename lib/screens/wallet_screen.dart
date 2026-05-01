@@ -9,6 +9,7 @@ import '../providers/auth_provider.dart';
 import '../services/firestore_service.dart';
 import '../theme.dart';
 import '../widgets/shimmer_loader.dart';
+import '../widgets/empty_state.dart';
 
 class WalletScreen extends StatelessWidget {
   const WalletScreen({super.key});
@@ -150,8 +151,11 @@ class WalletScreen extends StatelessWidget {
               }
               final txns = snap.data!;
               if (txns.isEmpty) {
-                return const Center(child: Text('No transactions yet.\nBuy some SS Coins!',
-                  style: TextStyle(color: AppColors.textMuted), textAlign: TextAlign.center));
+                return const EmptyState(
+                  emoji: '🪙',
+                  title: 'No transactions yet',
+                  message: 'Top up some SS Coins to start enrolling in courses.',
+                );
               }
               return ListView.builder(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
