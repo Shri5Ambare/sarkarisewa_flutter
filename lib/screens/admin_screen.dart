@@ -13,7 +13,9 @@ import '../services/audit_service.dart';
 import '../services/google_news_service.dart';
 import '../widgets/admin/live_ops_card.dart';
 import '../widgets/admin/audit_log_view.dart';
+import '../widgets/admin/daily_aggregates_chart.dart';
 import '../widgets/confirm_dialog.dart';
+import '../widgets/paginated_list.dart';
 // import '../services/cloudinary_service.dart';
 import '../services/r2_storage_service.dart';
 import '../services/csv_exporter.dart';
@@ -138,6 +140,18 @@ class _AuditTab extends StatelessWidget {
   const _AuditTab();
   @override
   Widget build(BuildContext context) => const AuditLogView();
+}
+
+/// Analytics → "Trends" sub-tab. Renders the 30-day DAU/Revenue chart
+/// from the `daily_aggregates` collection populated by the
+/// `computeDailyAggregates` Cloud Function.
+class _TrendsSubTab extends StatelessWidget {
+  const _TrendsSubTab();
+  @override
+  Widget build(BuildContext context) => const SingleChildScrollView(
+    padding: EdgeInsets.all(16),
+    child: DailyAggregatesChart(),
+  );
 }
 
 // ── Nav Tab ───────────────────────────────────────────────────────────────────
@@ -838,10 +852,24 @@ class _UsersTab extends StatefulWidget {
 }
 
 class _UsersTabState extends State<_UsersTab> {
+  // Filters drive a fresh PaginatedList instance via Key. When any
+  // filter changes we bump the key, which resets the cursor and reloads
+  // the first page server-side (no more in-memory filtering).
   String _search = '';
+  String? _role;   // null = all
+  String? _tier;   // null = all
+  int _filterVer = 0;
+
+  void _setFilter(VoidCallback mutate) {
+    setState(() {
+      mutate();
+      _filterVer++;
+    });
+  }
 
   @override
   Widget build(BuildContext context) => Column(children: [
+    // ── Search row + CSV export ─────────────────────────────────────
     Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
       child: Row(
@@ -849,22 +877,24 @@ class _UsersTabState extends State<_UsersTab> {
           Expanded(
             child: TextField(
               decoration: InputDecoration(
-                hintText: '🔍 Search by name or email…',
+                hintText: '🔍 Email starts with…',
                 hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 13),
                 filled: true, fillColor: AppColors.navyMid,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
                 contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 prefixIcon: const Icon(Icons.search, color: AppColors.textMuted, size: 18),
               ),
               style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
-              onChanged: (v) => setState(() => _search = v.toLowerCase()),
+              onChanged: (v) => _setFilter(() => _search = v.trim().toLowerCase()),
             ),
           ),
           const SizedBox(width: 8),
           IconButton(
             onPressed: () async {
               try {
-                // Fetch all users for export
                 final snapshot = await widget.db.listenUsers().first;
                 await CsvExporter.exportAndShare(snapshot, 'Users');
                 widget.toast('✅ CSV Exported successfully');
@@ -872,33 +902,73 @@ class _UsersTabState extends State<_UsersTab> {
                 widget.toast('❌ Failed to export: $e');
               }
             },
-            icon: const Icon(Icons.download, color: AppColors.saffron),
+            icon: const Icon(Icons.download, color: AppColors.primary),
             tooltip: 'Export users to CSV',
           ),
         ],
       ),
     ),
+    // ── Filter chip rows (role + tier) ──────────────────────────────
+    Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(children: [
+          _filterChip('All',     _role == null,        () => _setFilter(() => _role = null)),
+          _filterChip('Student', _role == 'student',   () => _setFilter(() => _role = 'student')),
+          _filterChip('Teacher', _role == 'teacher',   () => _setFilter(() => _role = 'teacher')),
+          _filterChip('Admin',   _role == 'admin',     () => _setFilter(() => _role = 'admin')),
+          _filterChip('Super',   _role == 'super_admin', () => _setFilter(() => _role = 'super_admin')),
+          const SizedBox(width: 12),
+          Container(width: 1, height: 22, color: AppColors.border),
+          const SizedBox(width: 12),
+          _filterChip('Any tier', _tier == null,     () => _setFilter(() => _tier = null)),
+          _filterChip('🆓 Free',  _tier == 'free',   () => _setFilter(() => _tier = 'free')),
+          _filterChip('🥈 Silver',_tier == 'silver', () => _setFilter(() => _tier = 'silver')),
+          _filterChip('🥇 Gold',  _tier == 'gold',   () => _setFilter(() => _tier = 'gold')),
+        ]),
+      ),
+    ),
     Expanded(
-      child: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: widget.db.listenUsers(),
-        builder: (ctx, snap) {
-          if (snap.hasError) return _errorView('users', snap.error);
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator(color: AppColors.saffron));
-          final users = snap.data!.where((u) {
-            if (_search.isEmpty) return true;
-            return (u['name'] ?? '').toString().toLowerCase().contains(_search) ||
-                   (u['email'] ?? '').toString().toLowerCase().contains(_search);
-          }).toList();
-          if (users.isEmpty) return const Center(child: Text('No matching users.', style: TextStyle(color: AppColors.textMuted)));
-          return ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-            itemCount: users.length,
-            itemBuilder: (_, i) => _UserCard(users[i], widget.db, widget.toast),
-          );
-        },
+      child: PaginatedList(
+        // Bumping the key on filter change forces a re-fetch from page 0.
+        key: ValueKey('users-$_filterVer-$_role-$_tier-$_search'),
+        pageSize: 25,
+        emptyEmoji: '🙋',
+        emptyTitle: 'No matching users',
+        emptyMessage: 'Try a broader filter or a shorter search prefix.',
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+        fetchPage: ({int pageSize = 25, startAfter}) =>
+            widget.db.getUsersPage(
+              pageSize: pageSize,
+              startAfter: startAfter,
+              role: _role,
+              tier: _tier,
+              searchEmail: _search.isEmpty ? null : _search,
+            ),
+        itemBuilder: (ctx, user, _) =>
+            _UserCard(user, widget.db, widget.toast),
       ),
     ),
   ]);
+
+  Widget _filterChip(String label, bool selected, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: ChoiceChip(
+        label: Text(label, style: TextStyle(
+          fontSize: 12,
+          color: selected ? Colors.white : AppColors.textSecondary,
+          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+        )),
+        selected: selected,
+        selectedColor: AppColors.primary,
+        backgroundColor: AppColors.navyLight,
+        side: BorderSide(color: selected ? AppColors.primary : AppColors.border),
+        onSelected: (_) => onTap(),
+      ),
+    );
+  }
 }
 
 class _UserCard extends StatelessWidget {
@@ -2748,7 +2818,7 @@ class _AnalyticsTabState extends State<_AnalyticsTab> with SingleTickerProviderS
   @override
   void initState() {
     super.initState();
-    _innerTabs = TabController(length: 3, vsync: this);
+    _innerTabs = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -2760,14 +2830,16 @@ class _AnalyticsTabState extends State<_AnalyticsTab> with SingleTickerProviderS
       color: AppColors.navyMid,
       child: TabBar(
         controller: _innerTabs,
+        isScrollable: true,
         tabs: const [
           Tab(text: '📊 Overview'),
+          Tab(text: '📈 Trends'),
           Tab(text: '🏆 Frequent'),
           Tab(text: '🔍 Per-User'),
         ],
-        labelColor: AppColors.saffron,
+        labelColor: AppColors.primary,
         unselectedLabelColor: AppColors.textMuted,
-        indicatorColor: AppColors.saffron,
+        indicatorColor: AppColors.primary,
         indicatorSize: TabBarIndicatorSize.label,
       ),
     ),
@@ -2775,6 +2847,7 @@ class _AnalyticsTabState extends State<_AnalyticsTab> with SingleTickerProviderS
       controller: _innerTabs,
       children: [
         _OverviewSubTab(widget.db),
+        const _TrendsSubTab(),
         _FrequentUsersSubTab(widget.db),
         _PerUserSubTab(widget.db),
       ],

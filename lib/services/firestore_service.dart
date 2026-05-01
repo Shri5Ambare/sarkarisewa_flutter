@@ -37,6 +37,51 @@ class FirestoreService {
         (s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList(),
       );
 
+  /// Cursor-paginated users for the admin tab. Supports server-side
+  /// filtering on `role` and `tier`, plus a prefix search on `email`
+  /// (Firestore's range-query trick: `q` ≤ email < `q + `).
+  ///
+  /// `searchEmail` should be the lowercased query the user typed. We
+  /// require the `email` field on users to be lowercase as written.
+  Future<({List<Map<String, dynamic>> items, DocumentSnapshot? cursor})>
+      getUsersPage({
+    int pageSize = 25,
+    DocumentSnapshot? startAfter,
+    String? role,
+    String? tier,
+    String? searchEmail,
+  }) async {
+    Query<Map<String, dynamic>> q = _db.collection('users');
+
+    if (role != null && role.isNotEmpty) {
+      q = q.where('role', isEqualTo: role);
+    }
+    if (tier != null && tier.isNotEmpty) {
+      q = q.where('tier', isEqualTo: tier);
+    }
+    if (searchEmail != null && searchEmail.isNotEmpty) {
+      // Prefix search via range query. Combined with role/tier filters
+      // this requires a composite index — see firestore.indexes.json.
+      final lower = searchEmail.toLowerCase();
+      q = q.where('email', isGreaterThanOrEqualTo: lower)
+           .where('email', isLessThan: '$lower')
+           .orderBy('email');
+    } else {
+      // No search: order by createdAt to get newest first. Falls back
+      // gracefully on docs missing createdAt (legacy users).
+      q = q.orderBy('createdAt', descending: true);
+    }
+
+    q = q.limit(pageSize);
+    if (startAfter != null) q = q.startAfterDocument(startAfter);
+
+    final snap = await q.get();
+    return (
+      items: snap.docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+      cursor: snap.docs.isEmpty ? null : snap.docs.last,
+    );
+  }
+
   Future<List<Map<String, dynamic>>> getTeachers() async {
     final snap = await _db.collection('users').where('role', isEqualTo: 'teacher').get();
     return snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
