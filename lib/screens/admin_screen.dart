@@ -14,11 +14,16 @@ import '../services/google_news_service.dart';
 import '../widgets/admin/live_ops_card.dart';
 import '../widgets/admin/audit_log_view.dart';
 import '../widgets/admin/daily_aggregates_chart.dart';
+import '../widgets/admin/cohort_chart.dart';
+import '../widgets/admin/funnel_chart.dart';
+import '../widgets/admin/bulk_import_view.dart';
+import '../widgets/admin/experiments_view.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/paginated_list.dart';
 // import '../services/cloudinary_service.dart';
 import '../services/r2_storage_service.dart';
 import '../services/csv_exporter.dart';
+import 'dart:convert';
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:file_picker/file_picker.dart';
@@ -35,6 +40,23 @@ class AdminScreen extends StatefulWidget {
 class _AdminScreenState extends State<AdminScreen> {
   int _tab = 0;
   final _db = FirestoreService();
+
+  static String _roleChipLabel(String role) => switch (role) {
+    'super_admin'   => '👑 Super Admin',
+    'moderator'     => '⚖ Moderator',
+    'finance'       => '💰 Finance',
+    'teacher_admin' => '📚 Teacher Admin',
+    _               => role.toUpperCase(),
+  };
+
+  static Color _roleChipColor(String role) => switch (role) {
+    'super_admin'   => AppColors.ruby,
+    'moderator'     => AppColors.emerald,
+    'finance'       => AppColors.gold,
+    'teacher_admin' => AppColors.sky,
+    _               => AppColors.violet,
+  };
+
   void _showToast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -57,28 +79,56 @@ class _AdminScreenState extends State<AdminScreen> {
     (id: 9,  label: 'Analytics',   icon: Icons.analytics_outlined),
     (id: 10, label: 'Access',      icon: Icons.shield_outlined),
     (id: 11, label: 'Audit',       icon: Icons.history_outlined),
+    (id: 12, label: 'Content',     icon: Icons.folder_open_outlined),
+    (id: 13, label: 'Finance',     icon: Icons.account_balance_outlined),
+    (id: 14, label: 'Moderation',  icon: Icons.gavel_outlined),
+    (id: 15, label: 'System',      icon: Icons.tune_outlined),
   ];
 
-  List<({int id, String label, IconData icon})> _visibleTabs(bool isSuperAdmin) =>
-      // 'Access' (10) is super-admin only. 'Audit' (11) is available to
-      // all admins so they can review their own + peer activity.
-      isSuperAdmin ? _baseTabs : _baseTabs.where((t) => t.id != 10).toList();
+  // Tab visibility by role:
+  //  super_admin   → all tabs
+  //  admin         → all except Access(10)
+  //  moderator     → Dashboard(0), Submissions(5), News(6), Moderation(14), Audit(11)
+  //  finance       → Dashboard(0), Payments(1), Orders(2), Ledger(7), Finance(13), Audit(11)
+  //  teacher_admin → Dashboard(0), Courses(4), Content(12), Audit(11)
+  //  (fallback)    → Dashboard(0) only
+  List<({int id, String label, IconData icon})> _visibleTabs(String role) {
+    if (role == 'super_admin') return _baseTabs;
+    if (role == 'admin') return _baseTabs.where((t) => t.id != 10).toList();
+    if (role == 'moderator') {
+      const allowed = {0, 5, 6, 11, 14};
+      return _baseTabs.where((t) => allowed.contains(t.id)).toList();
+    }
+    if (role == 'finance') {
+      const allowed = {0, 1, 2, 7, 11, 13};
+      return _baseTabs.where((t) => allowed.contains(t.id)).toList();
+    }
+    if (role == 'teacher_admin') {
+      const allowed = {0, 4, 11, 12};
+      return _baseTabs.where((t) => allowed.contains(t.id)).toList();
+    }
+    return _baseTabs.where((t) => t.id == 0).toList();
+  }
 
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final lang = context.watch<LocaleProvider>().lang;
     final isSuperAdmin = auth.isSuperAdmin;
-    final visibleTabs  = _visibleTabs(isSuperAdmin);
+    final role         = auth.role;
+    final visibleTabs  = _visibleTabs(role);
 
     return Scaffold(
       appBar: AppBar(
         title: Row(mainAxisSize: MainAxisSize.min, children: [
           Text(t('admin.title', lang)),
-          if (isSuperAdmin) ...[const SizedBox(width: 8),
+          if (role != 'admin') ...[const SizedBox(width: 8),
             Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(color: AppColors.ruby.withAlpha(31), borderRadius: BorderRadius.circular(20)),
-              child: const Text('👑 Super Admin', style: TextStyle(color: AppColors.ruby, fontSize: 10, fontWeight: FontWeight.w800))),
+              decoration: BoxDecoration(
+                color: _roleChipColor(role).withAlpha(31),
+                borderRadius: BorderRadius.circular(20)),
+              child: Text(_roleChipLabel(role),
+                style: TextStyle(color: _roleChipColor(role), fontSize: 10, fontWeight: FontWeight.w800))),
           ],
         ]),
         actions: [
@@ -129,6 +179,10 @@ class _AdminScreenState extends State<AdminScreen> {
       9 => _AnalyticsTab(_db),
       10 => _AccessControlTab(_db, _showToast),
       11 => const _AuditTab(),
+      12 => _ContentTab(_db, _showToast),
+      13 => _FinanceTab(_db, _showToast),
+      14 => _ModerationTab(_db, _showToast),
+      15 => _SystemTab(_db, _showToast),
       _ => const SizedBox(),
     };
   }
@@ -851,73 +905,125 @@ class _UsersTab extends StatefulWidget {
   State<_UsersTab> createState() => _UsersTabState();
 }
 
-class _UsersTabState extends State<_UsersTab> {
-  // Filters drive a fresh PaginatedList instance via Key. When any
-  // filter changes we bump the key, which resets the cursor and reloads
-  // the first page server-side (no more in-memory filtering).
+class _UsersTabState extends State<_UsersTab> with SingleTickerProviderStateMixin {
   String _search = '';
-  String? _role;   // null = all
-  String? _tier;   // null = all
+  String? _role;
+  String? _tier;
   int _filterVer = 0;
+  final Set<String> _selected = {};
+  bool _bulkMode = false;
+  late final TabController _innerTabs;
+
+  @override
+  void initState() {
+    super.initState();
+    _innerTabs = TabController(length: 3, vsync: this);
+  }
+
+  @override
+  void dispose() { _innerTabs.dispose(); super.dispose(); }
 
   void _setFilter(VoidCallback mutate) {
     setState(() {
       mutate();
       _filterVer++;
+      _selected.clear();
     });
   }
 
   @override
   Widget build(BuildContext context) => Column(children: [
-    // ── Search row + CSV export ─────────────────────────────────────
-    Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              decoration: InputDecoration(
-                hintText: '🔍 Email starts with…',
-                hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 13),
-                filled: true, fillColor: AppColors.navyMid,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                prefixIcon: const Icon(Icons.search, color: AppColors.textMuted, size: 18),
-              ),
-              style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
-              onChanged: (v) => _setFilter(() => _search = v.trim().toLowerCase()),
-            ),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            onPressed: () async {
-              try {
-                final snapshot = await widget.db.listenUsers().first;
-                await CsvExporter.exportAndShare(snapshot, 'Users');
-                widget.toast('✅ CSV Exported successfully');
-              } catch (e) {
-                widget.toast('❌ Failed to export: $e');
-              }
-            },
-            icon: const Icon(Icons.download, color: AppColors.primary),
-            tooltip: 'Export users to CSV',
-          ),
+    // ── Inner tab bar ──────────────────────────────────────────────
+    Container(
+      color: AppColors.navyMid,
+      child: TabBar(
+        controller: _innerTabs,
+        tabs: const [
+          Tab(text: '👥 Users'),
+          Tab(text: '🏷 Segments'),
+          Tab(text: '📋 My Log'),
         ],
+        labelColor: AppColors.primary,
+        unselectedLabelColor: AppColors.textMuted,
+        indicatorColor: AppColors.primary,
+        indicatorSize: TabBarIndicatorSize.label,
       ),
     ),
-    // ── Filter chip rows (role + tier) ──────────────────────────────
+    Expanded(child: TabBarView(controller: _innerTabs, children: [
+      _buildUsersPane(),
+      _SegmentsPane(db: widget.db, toast: widget.toast,
+          onApply: (filters) {
+            _setFilter(() {
+              _role = filters['role'] as String?;
+              _tier = filters['tier'] as String?;
+              _search = filters['search'] as String? ?? '';
+            });
+            _innerTabs.animateTo(0);
+          }),
+      _AdminSessionLog(db: widget.db),
+    ])),
+  ]);
+
+  Widget _buildUsersPane() => Column(children: [
+    // ── Search row + CSV export ─────────────────────────────────
     Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+      child: Row(children: [
+        Expanded(
+          child: TextField(
+            decoration: InputDecoration(
+              hintText: '🔍 Email starts with…',
+              hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+              filled: true, fillColor: AppColors.navyMid,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              prefixIcon: const Icon(Icons.search, color: AppColors.textMuted, size: 18),
+            ),
+            style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
+            onChanged: (v) => _setFilter(() => _search = v.trim().toLowerCase()),
+          ),
+        ),
+        const SizedBox(width: 6),
+        // Bulk-select toggle
+        IconButton(
+          icon: Icon(
+            _bulkMode ? Icons.check_box : Icons.check_box_outline_blank,
+            color: _bulkMode ? AppColors.primary : AppColors.textMuted,
+          ),
+          tooltip: 'Toggle bulk select',
+          onPressed: () => setState(() {
+            _bulkMode = !_bulkMode;
+            _selected.clear();
+          }),
+        ),
+        IconButton(
+          onPressed: () async {
+            try {
+              final snapshot = await widget.db.listenUsers().first;
+              await CsvExporter.exportAndShare(snapshot, 'Users');
+              widget.toast('✅ CSV Exported');
+            } catch (e) {
+              widget.toast('❌ Failed: $e');
+            }
+          },
+          icon: const Icon(Icons.download, color: AppColors.primary),
+          tooltip: 'Export users to CSV',
+        ),
+      ]),
+    ),
+    // ── Filter chips ────────────────────────────────────────────
+    Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(children: [
-          _filterChip('All',     _role == null,        () => _setFilter(() => _role = null)),
-          _filterChip('Student', _role == 'student',   () => _setFilter(() => _role = 'student')),
-          _filterChip('Teacher', _role == 'teacher',   () => _setFilter(() => _role = 'teacher')),
-          _filterChip('Admin',   _role == 'admin',     () => _setFilter(() => _role = 'admin')),
+          _filterChip('All',     _role == null,          () => _setFilter(() => _role = null)),
+          _filterChip('Student', _role == 'student',     () => _setFilter(() => _role = 'student')),
+          _filterChip('Teacher', _role == 'teacher',     () => _setFilter(() => _role = 'teacher')),
+          _filterChip('Admin',   _role == 'admin',       () => _setFilter(() => _role = 'admin')),
           _filterChip('Super',   _role == 'super_admin', () => _setFilter(() => _role = 'super_admin')),
           const SizedBox(width: 12),
           Container(width: 1, height: 22, color: AppColors.border),
@@ -929,15 +1035,23 @@ class _UsersTabState extends State<_UsersTab> {
         ]),
       ),
     ),
+    // ── Bulk action bar (shown when items selected) ─────────────
+    if (_bulkMode && _selected.isNotEmpty)
+      _BulkActionBar(
+        count: _selected.length,
+        db: widget.db,
+        toast: widget.toast,
+        selectedUids: _selected.toList(),
+        onDone: () => setState(() { _selected.clear(); _filterVer++; }),
+      ),
     Expanded(
       child: PaginatedList(
-        // Bumping the key on filter change forces a re-fetch from page 0.
         key: ValueKey('users-$_filterVer-$_role-$_tier-$_search'),
         pageSize: 25,
         emptyEmoji: '🙋',
         emptyTitle: 'No matching users',
         emptyMessage: 'Try a broader filter or a shorter search prefix.',
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 80),
         fetchPage: ({int pageSize = 25, startAfter}) =>
             widget.db.getUsersPage(
               pageSize: pageSize,
@@ -946,8 +1060,18 @@ class _UsersTabState extends State<_UsersTab> {
               tier: _tier,
               searchEmail: _search.isEmpty ? null : _search,
             ),
-        itemBuilder: (ctx, user, _) =>
-            _UserCard(user, widget.db, widget.toast),
+        itemBuilder: (ctx, user, _) => _bulkMode
+            ? _BulkUserRow(
+                user: user,
+                selected: _selected.contains(user['id']),
+                onToggle: (v) => setState(() {
+                  if (v) { _selected.add(user['id']); }
+                  else   { _selected.remove(user['id']); }
+                }),
+                db: widget.db,
+                toast: widget.toast,
+              )
+            : _UserCard(user, widget.db, widget.toast),
       ),
     ),
   ]);
@@ -1091,7 +1215,668 @@ class _UserCard extends StatelessWidget {
             },
           ),
         ]),
+        const SizedBox(height: 8),
+        // ── Bottom action row: block, impersonate, GDPR ─────────────
+        Row(children: [
+          // Block / unblock
+          _UserActionChip(
+            icon: (user['disabled'] as bool? ?? false)
+                ? Icons.lock_open_outlined
+                : Icons.block_outlined,
+            label: (user['disabled'] as bool? ?? false) ? 'Unblock' : 'Block',
+            color: (user['disabled'] as bool? ?? false) ? AppColors.emerald : AppColors.ruby,
+            onTap: () async {
+              final blocked = !(user['disabled'] as bool? ?? false);
+              final ok = await _confirm(
+                context,
+                blocked
+                    ? 'Block ${user['name']}?\nThey will see "Account suspended".'
+                    : 'Unblock ${user['name']}?',
+              );
+              if (!ok) return;
+              try {
+                await db.setUserBlocked(user['id'], blocked: blocked);
+                toast(blocked ? '🚫 ${user['name']} blocked' : '✅ ${user['name']} unblocked');
+              } catch (e) { toast('❌ $e'); }
+            },
+          ),
+          const SizedBox(width: 6),
+          // View as user (impersonation)
+          _UserActionChip(
+            icon: Icons.visibility_outlined,
+            label: 'View as',
+            color: AppColors.sky,
+            onTap: () => _showImpersonateDialog(context, user),
+          ),
+          const SizedBox(width: 6),
+          // GDPR export
+          _UserActionChip(
+            icon: Icons.download_outlined,
+            label: 'GDPR Export',
+            color: AppColors.violet,
+            onTap: () => _showGdprDialog(context, user, db, toast),
+          ),
+        ]),
       ]),
+    );
+  }
+
+  void _showImpersonateDialog(BuildContext context, Map<String, dynamic> user) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.navyMid,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        maxChildSize: 0.95,
+        minChildSize: 0.4,
+        expand: false,
+        builder: (ctx, scroll) => ListView(
+          controller: scroll,
+          padding: const EdgeInsets.all(16),
+          children: [
+            Row(children: [
+              const Icon(Icons.visibility_outlined, color: AppColors.sky, size: 18),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Viewing as ${user['name'] ?? 'user'} (read-only)',
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14))),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(color: AppColors.ruby.withAlpha(20),
+                    borderRadius: BorderRadius.circular(20)),
+                child: const Text('READ ONLY',
+                    style: TextStyle(color: AppColors.ruby, fontSize: 9,
+                        fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+              ),
+            ]),
+            const Divider(height: 20),
+            _ImpersonateProfile(user: user, db: db),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showGdprDialog(BuildContext context, Map<String, dynamic> user,
+      FirestoreService db, Function(String) toast) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.navyMid,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => _GdprSheet(user: user, db: db, toast: toast),
+    );
+  }
+}
+
+class _UserActionChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+  const _UserActionChip({required this.icon, required this.label,
+      required this.color, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+        border: Border.all(color: color.withAlpha(60)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 12, color: color),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(color: color, fontSize: 10,
+            fontWeight: FontWeight.w700)),
+      ]),
+    ),
+  );
+}
+
+// ── Impersonation profile view ─────────────────────────────────────────────
+class _ImpersonateProfile extends StatelessWidget {
+  final Map<String, dynamic> user;
+  final FirestoreService db;
+  const _ImpersonateProfile({required this.user, required this.db});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // Avatar + basic info
+      Center(child: CircleAvatar(
+        radius: 36, backgroundColor: AppColors.saffron.withAlpha(51),
+        child: Text((user['name'] ?? 'U').substring(0, 1).toUpperCase(),
+            style: const TextStyle(color: AppColors.saffron, fontSize: 28,
+                fontWeight: FontWeight.w800)),
+      )),
+      const SizedBox(height: 12),
+      Center(child: Text(user['name'] ?? '',
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary))),
+      Center(child: Text(user['email'] ?? '',
+          style: const TextStyle(color: AppColors.textMuted, fontSize: 12))),
+      const SizedBox(height: 12),
+      Wrap(spacing: 6, runSpacing: 6, children: [
+        _ImpChip('🪙 ${user['coins'] ?? 0} coins', AppColors.gold),
+        _ImpChip('⭐ ${user['points'] ?? 0} pts', AppColors.violet),
+        _ImpChip('🔑 ${user['role'] ?? 'student'}', AppColors.primary),
+        _ImpChip('${user['tier'] ?? 'free'} tier', AppColors.sky),
+        _ImpChip('🔥 ${user['streak'] ?? 0} day streak', AppColors.ruby),
+      ]),
+      const SizedBox(height: 14),
+      // Enrolled courses
+      const Text('Enrolled Courses',
+          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13,
+              color: AppColors.textPrimary)),
+      const SizedBox(height: 6),
+      if ((user['enrolledCourses'] as List?)?.isEmpty ?? true)
+        const Text('No courses enrolled.',
+            style: TextStyle(color: AppColors.textMuted, fontSize: 12))
+      else
+        ...(user['enrolledCourses'] as List)
+            .map((cid) => Container(
+              margin: const EdgeInsets.only(bottom: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(color: AppColors.navyLight,
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
+                  border: Border.all(color: AppColors.border)),
+              child: Text(cid.toString(),
+                  style: const TextStyle(fontSize: 11, color: AppColors.textSecondary,
+                      fontFamily: 'monospace')),
+            )),
+    ]);
+  }
+}
+
+class _ImpChip extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _ImpChip(this.label, this.color);
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(AppRadius.pill)),
+    child: Text(label, style: TextStyle(color: color, fontSize: 11,
+        fontWeight: FontWeight.w700)),
+  );
+}
+
+// ── GDPR sheet ────────────────────────────────────────────────────────────────
+class _GdprSheet extends StatefulWidget {
+  final Map<String, dynamic> user;
+  final FirestoreService db;
+  final Function(String) toast;
+  const _GdprSheet({required this.user, required this.db, required this.toast});
+
+  @override
+  State<_GdprSheet> createState() => _GdprSheetState();
+}
+
+class _GdprSheetState extends State<_GdprSheet> {
+  bool _loading = false;
+  String? _exported;
+
+  Future<void> _export() async {
+    setState(() => _loading = true);
+    try {
+      final data = await widget.db.exportUserData(widget.user['id']);
+      final jsonStr = const JsonEncoder.withIndent('  ').convert(data);
+      setState(() { _exported = jsonStr; _loading = false; });
+    } catch (e) {
+      setState(() => _loading = false);
+      widget.toast('❌ Export failed: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            const Icon(Icons.privacy_tip_outlined, color: AppColors.violet, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text('GDPR — ${widget.user['name'] ?? 'User'}',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary))),
+          ]),
+          const SizedBox(height: 6),
+          const Text('Export all user data as JSON, or request account deletion.',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          const SizedBox(height: 16),
+          if (_loading)
+            const Center(child: CircularProgressIndicator(color: AppColors.primary))
+          else if (_exported != null) ...[
+            Container(
+              height: 200,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.navyLight,
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: SingleChildScrollView(
+                child: Text(_exported!,
+                    style: const TextStyle(fontSize: 10, fontFamily: 'monospace',
+                        color: AppColors.textSecondary)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.download, size: 16),
+              label: const Text('Download JSON'),
+              onPressed: () async {
+                await CsvExporter.exportJson(_exported!, '${widget.user['id']}_data.json');
+                widget.toast('✅ Data exported');
+              },
+            ),
+          ] else
+            ElevatedButton.icon(
+              icon: const Icon(Icons.download, size: 16),
+              label: const Text('Export User Data (JSON)'),
+              onPressed: _export,
+            ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.delete_forever, color: AppColors.ruby, size: 16),
+            label: const Text('Request Account Deletion',
+                style: TextStyle(color: AppColors.ruby)),
+            style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: AppColors.ruby)),
+            onPressed: () async {
+              final ok = await _confirm(
+                context,
+                '⚠ Delete ${widget.user['name']}?\n\n'
+                'This anonymizes their transactions and removes all personal data. '
+                'This action is irreversible.',
+              );
+              if (!ok) return;
+              widget.toast('⏳ Account deletion queued. The cleanup Cloud Function will run within 5 minutes.');
+              if (context.mounted) Navigator.pop(context);
+            },
+          ),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Bulk action row (checkbox + user info) ────────────────────────────────────
+class _BulkUserRow extends StatelessWidget {
+  final Map<String, dynamic> user;
+  final bool selected;
+  final ValueChanged<bool> onToggle;
+  final FirestoreService db;
+  final Function(String) toast;
+  const _BulkUserRow({required this.user, required this.selected,
+      required this.onToggle, required this.db, required this.toast});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => onToggle(!selected),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.primary.withAlpha(15) : AppColors.cardBg,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+          border: Border.all(
+              color: selected ? AppColors.primary.withAlpha(100) : AppColors.border),
+        ),
+        child: Row(children: [
+          Checkbox(
+            value: selected,
+            onChanged: (v) => onToggle(v ?? false),
+            activeColor: AppColors.primary,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(4)),
+          ),
+          const SizedBox(width: 8),
+          CircleAvatar(
+            radius: 16, backgroundColor: AppColors.saffron.withAlpha(51),
+            child: Text(
+              (user['name'] ?? 'U').substring(0, 1).toUpperCase(),
+              style: const TextStyle(color: AppColors.saffron,
+                  fontWeight: FontWeight.w700, fontSize: 12),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(user['name'] ?? '',
+                  style: const TextStyle(fontWeight: FontWeight.w600,
+                      fontSize: 13, color: AppColors.textPrimary)),
+              Text(user['email'] ?? '',
+                  style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
+            ],
+          )),
+          Text(user['role'] ?? 'student',
+              style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── Bulk action bar (appears when users are selected) ─────────────────────────
+class _BulkActionBar extends StatelessWidget {
+  final int count;
+  final List<String> selectedUids;
+  final FirestoreService db;
+  final Function(String) toast;
+  final VoidCallback onDone;
+  const _BulkActionBar({required this.count, required this.selectedUids,
+      required this.db, required this.toast, required this.onDone});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: const BoxDecoration(
+        color: AppColors.primary,
+        border: Border.symmetric(horizontal: BorderSide(color: AppColors.border)),
+      ),
+      child: Row(children: [
+        Text('$count selected',
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        const Spacer(),
+        _bulkBtn(Icons.monetization_on, 'Coins', () => _awardCoins(context)),
+        _bulkBtn(Icons.star, 'Tier', () => _changeTier(context)),
+        _bulkBtn(Icons.manage_accounts, 'Role', () => _changeRole(context)),
+        _bulkBtn(Icons.clear, '', () => onDone()),
+      ]),
+    );
+  }
+
+  Widget _bulkBtn(IconData icon, String label, VoidCallback onTap) =>
+      TextButton.icon(
+        icon: Icon(icon, color: Colors.white, size: 16),
+        label: Text(label, style: const TextStyle(color: Colors.white, fontSize: 11)),
+        onPressed: onTap,
+        style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
+      );
+
+  void _awardCoins(BuildContext context) {
+    final ctrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Award coins to $count users'),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+              hintText: 'Coins to award', labelText: 'Coins'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () async {
+              final coins = int.tryParse(ctrl.text.trim()) ?? 0;
+              if (coins <= 0) return;
+              Navigator.pop(ctx);
+              try {
+                await db.bulkAwardCoinsToUsers(
+                    selectedUids, coins, 'Bulk admin award');
+                toast('✅ Awarded $coins coins to $count users');
+                onDone();
+              } catch (e) { toast('❌ $e'); }
+            },
+            child: const Text('Award'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _changeTier(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text('Change tier for $count users'),
+        children: ['free', 'silver', 'gold'].map((t) => SimpleDialogOption(
+          onPressed: () async {
+            Navigator.pop(ctx);
+            try {
+              await db.bulkUpdateUserField(selectedUids, {'tier': t});
+              toast('✅ Tier set to $t for $count users');
+              onDone();
+            } catch (e) { toast('❌ $e'); }
+          },
+          child: Text(t),
+        )).toList(),
+      ),
+    );
+  }
+
+  void _changeRole(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text('Change role for $count users'),
+        children: ['student', 'teacher', 'admin'].map((r) => SimpleDialogOption(
+          onPressed: () async {
+            Navigator.pop(ctx);
+            try {
+              await db.bulkUpdateUserField(selectedUids, {'role': r});
+              toast('✅ Role set to $r for $count users');
+              onDone();
+            } catch (e) { toast('❌ $e'); }
+          },
+          child: Text(r),
+        )).toList(),
+      ),
+    );
+  }
+}
+
+// ── User Segments pane ────────────────────────────────────────────────────────
+class _SegmentsPane extends StatelessWidget {
+  final FirestoreService db;
+  final Function(String) toast;
+  final Function(Map<String, dynamic>) onApply;
+  const _SegmentsPane({required this.db, required this.toast, required this.onApply});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: AppColors.primary,
+        icon: const Icon(Icons.add, color: Colors.white),
+        label: const Text('Save current filters',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+        onPressed: () => _createSegment(context),
+      ),
+      body: StreamBuilder<List<Map<String, dynamic>>>(
+        stream: db.listenAdminSegments(),
+        builder: (ctx, snap) {
+          if (!snap.hasData) {
+            return const Center(
+                child: CircularProgressIndicator(color: AppColors.primary));
+          }
+          final segs = snap.data!;
+          if (segs.isEmpty) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text('🏷', style: TextStyle(fontSize: 40)),
+                  SizedBox(height: 8),
+                  Text('No segments yet.',
+                      style: TextStyle(color: AppColors.textMuted,
+                          fontWeight: FontWeight.w600)),
+                  SizedBox(height: 4),
+                  Text(
+                    'Apply filters in the Users tab, then tap "Save current filters" '
+                    'to create a named segment.',
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                ]),
+              ),
+            );
+          }
+          return ListView.builder(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+            itemCount: segs.length,
+            itemBuilder: (_, i) {
+              final s = segs[i];
+              final filters = s['filters'] as Map<String, dynamic>? ?? {};
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.cardBg,
+                  borderRadius: BorderRadius.circular(AppRadius.xxl),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Row(children: [
+                  const Text('🏷', style: TextStyle(fontSize: 20)),
+                  const SizedBox(width: 10),
+                  Expanded(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(s['name'] ?? 'Segment',
+                          style: const TextStyle(fontWeight: FontWeight.w700,
+                              fontSize: 13, color: AppColors.textPrimary)),
+                      Text(
+                        filters.entries.map((e) => '${e.key}: ${e.value}').join(', '),
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
+                      ),
+                    ],
+                  )),
+                  TextButton(
+                    onPressed: () => onApply(Map<String, dynamic>.from(filters)),
+                    child: const Text('Apply'),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, color: AppColors.ruby, size: 18),
+                    onPressed: () async {
+                      await db.deleteAdminSegment(s['id']);
+                      toast('✅ Segment deleted');
+                    },
+                  ),
+                ]),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  void _createSegment(BuildContext context) {
+    final nameCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Save segment'),
+        content: TextField(
+          controller: nameCtrl,
+          decoration: const InputDecoration(
+              hintText: 'Segment name (e.g. at-risk users)',
+              labelText: 'Name'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () async {
+              final name = nameCtrl.text.trim();
+              if (name.isEmpty) return;
+              Navigator.pop(ctx);
+              // Save empty filters — user should apply filters first
+              await db.saveAdminSegment(name, {});
+              toast('✅ Segment "$name" saved');
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Admin session log (Phase 8.4) ─────────────────────────────────────────────
+class _AdminSessionLog extends StatelessWidget {
+  final FirestoreService db;
+  const _AdminSessionLog({required this.db});
+
+  @override
+  Widget build(BuildContext context) {
+    final adminUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: db.listenAdminAuditLog(adminUid),
+      builder: (ctx, snap) {
+        if (!snap.hasData) {
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary));
+        }
+        final entries = snap.data!;
+        if (entries.isEmpty) {
+          return const Center(
+            child: Text('No activity logged yet.',
+                style: TextStyle(color: AppColors.textMuted)),
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: entries.length,
+          itemBuilder: (_, i) {
+            final e = entries[i];
+            final ts = e['timestamp'];
+            String time = '';
+            if (ts != null) {
+              final dt = (ts as Timestamp).toDate();
+              time = '${dt.month}/${dt.day} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
+            }
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.cardBg,
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Row(children: [
+                Expanded(child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(e['action'] ?? '',
+                        style: const TextStyle(fontWeight: FontWeight.w700,
+                            fontSize: 12, color: AppColors.textPrimary)),
+                    if ((e['target'] as Map?)?.isNotEmpty == true)
+                      Text(
+                        '${(e['target'] as Map?)?['kind'] ?? ''}: '
+                        '${(e['target'] as Map?)?['id'] ?? ''}',
+                        style: const TextStyle(
+                            color: AppColors.textMuted, fontSize: 11),
+                      ),
+                  ],
+                )),
+                Text(time,
+                    style: const TextStyle(color: AppColors.textMuted, fontSize: 10)),
+              ]),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -2818,7 +3603,7 @@ class _AnalyticsTabState extends State<_AnalyticsTab> with SingleTickerProviderS
   @override
   void initState() {
     super.initState();
-    _innerTabs = TabController(length: 4, vsync: this);
+    _innerTabs = TabController(length: 7, vsync: this);
   }
 
   @override
@@ -2834,6 +3619,9 @@ class _AnalyticsTabState extends State<_AnalyticsTab> with SingleTickerProviderS
         tabs: const [
           Tab(text: '📊 Overview'),
           Tab(text: '📈 Trends'),
+          Tab(text: '🔄 Cohort'),
+          Tab(text: '🎯 Funnel'),
+          Tab(text: '⚡ Budget'),
           Tab(text: '🏆 Frequent'),
           Tab(text: '🔍 Per-User'),
         ],
@@ -2848,11 +3636,145 @@ class _AnalyticsTabState extends State<_AnalyticsTab> with SingleTickerProviderS
       children: [
         _OverviewSubTab(widget.db),
         const _TrendsSubTab(),
+        const _CohortSubTab(),
+        const _FunnelSubTab(),
+        const _BudgetSubTab(),
         _FrequentUsersSubTab(widget.db),
         _PerUserSubTab(widget.db),
       ],
     )),
   ]);
+}
+
+// ── Cohort sub-tab ────────────────────────────────────────────────────────────
+class _CohortSubTab extends StatelessWidget {
+  const _CohortSubTab();
+  @override
+  Widget build(BuildContext context) => const SingleChildScrollView(
+    padding: EdgeInsets.all(16),
+    child: CohortRetentionChart(),
+  );
+}
+
+// ── Funnel sub-tab ────────────────────────────────────────────────────────────
+class _FunnelSubTab extends StatelessWidget {
+  const _FunnelSubTab();
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    padding: const EdgeInsets.all(16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('🎯 Conversion Funnel',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+        const SizedBox(height: 4),
+        const Text('Signup → First Course → First Test → First Battle',
+            style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(AppSpace.x4),
+          decoration: BoxDecoration(
+            color: AppColors.cardBg,
+            borderRadius: BorderRadius.circular(AppRadius.xxl),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: const FunnelChart(),
+        ),
+      ],
+    ),
+  );
+}
+
+// ── Budget / Firestore read quota sub-tab ─────────────────────────────────────
+class _BudgetSubTab extends StatelessWidget {
+  const _BudgetSubTab();
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<List<Map<String, dynamic>>>(
+    future: _fetchBudget(),
+    builder: (ctx, snap) {
+      if (!snap.hasData) {
+        return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+      }
+      final days = snap.data!;
+      if (days.isEmpty) {
+        return const Center(
+          child: Padding(padding: EdgeInsets.all(24), child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('⚡', style: TextStyle(fontSize: 40)),
+              SizedBox(height: 8),
+              Text('No Firestore budget data yet.',
+                  style: TextStyle(color: AppColors.textMuted)),
+              SizedBox(height: 4),
+              Text(
+                'Add a firestoreReads field to daily_aggregates via the '
+                'computeDailyAggregates Cloud Function to see read counts here.',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 11),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          )),
+        );
+      }
+      return ListView(padding: const EdgeInsets.all(16), children: [
+        const Text('⚡ Firestore Read Budget (last 30 days)',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+        const SizedBox(height: 4),
+        const Text('Alert threshold: 500k reads / day',
+            style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+        const SizedBox(height: 14),
+        ...days.map((d) {
+          final reads = (d['firestoreReads'] as num? ?? 0).toInt();
+          final over = reads > 500000;
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: over ? AppColors.ruby.withAlpha(15) : AppColors.cardBg,
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              border: Border.all(
+                color: over ? AppColors.ruby.withAlpha(80) : AppColors.border),
+            ),
+            child: Row(children: [
+              Expanded(child: Text(d['id'] as String? ?? '',
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 12))),
+              if (over)
+                const Padding(
+                  padding: EdgeInsets.only(right: 6),
+                  child: Icon(Icons.warning_amber, color: AppColors.ruby, size: 16),
+                ),
+              Text(
+                reads >= 1000000
+                    ? '${(reads / 1000000).toStringAsFixed(2)}M'
+                    : reads >= 1000 ? '${(reads / 1000).toStringAsFixed(1)}K'
+                    : '$reads',
+                style: TextStyle(
+                  color: over ? AppColors.ruby : AppColors.textPrimary,
+                  fontWeight: FontWeight.w800, fontSize: 14),
+              ),
+              const SizedBox(width: 4),
+              const Text('reads',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+            ]),
+          );
+        }),
+      ]);
+    },
+  );
+
+  Future<List<Map<String, dynamic>>> _fetchBudget() async {
+    final snap = await FirebaseFirestore.instance
+        .collection('daily_aggregates')
+        .orderBy(FieldPath.documentId, descending: true)
+        .limit(30)
+        .get();
+    return snap.docs
+        .map((d) => {'id': d.id, ...d.data()})
+        .where((d) => d['firestoreReads'] != null)
+        .toList()
+        ..sort((a, b) => (a['id'] as String).compareTo(b['id'] as String));
+  }
 }
 
 // ── Overview sub-tab ──────────────────────────────────────────────────────────
@@ -3360,14 +4282,35 @@ class _AccessControlCard extends StatelessWidget {
   final Function(String) toast;
   const _AccessControlCard(this.user, this.db, this.toast);
 
-  static const _roles = ['student', 'teacher', 'admin', 'super_admin'];
+  static const _roles = [
+    'student',
+    'teacher',
+    'teacher_admin',
+    'moderator',
+    'finance',
+    'admin',
+    'super_admin',
+  ];
   static const _tiers = ['free', 'silver', 'gold'];
 
+  static const _roleDescriptions = {
+    'student':      'Regular learner — no admin access',
+    'teacher':      'Can manage own courses and live classes',
+    'teacher_admin':'Manages all teacher content across the platform',
+    'moderator':    'Reviews submissions, news and battle abuse reports',
+    'finance':      'Views payments, ledger and can process refunds',
+    'admin':        'Full admin — cannot modify super_admin accounts',
+    'super_admin':  '⚠ Full platform control including admin management',
+  };
+
   Color _roleColor(String role) => switch (role) {
-    'super_admin' => AppColors.ruby,
-    'admin'       => AppColors.violet,
-    'teacher'     => AppColors.sky,
-    _             => AppColors.textMuted,
+    'super_admin'   => AppColors.ruby,
+    'admin'         => AppColors.violet,
+    'finance'       => AppColors.gold,
+    'moderator'     => AppColors.emerald,
+    'teacher_admin' => AppColors.sky,
+    'teacher'       => AppColors.sky,
+    _               => AppColors.textMuted,
   };
 
   @override
@@ -3401,7 +4344,15 @@ class _AccessControlCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(color: _roleColor(role).withAlpha(31), borderRadius: BorderRadius.circular(20)),
             child: Text(
-              role == 'super_admin' ? '👑 Super Admin' : role.toUpperCase(),
+              switch (role) {
+                'super_admin'   => '👑 SUPER',
+                'admin'         => '🛡 ADMIN',
+                'finance'       => '💰 FINANCE',
+                'moderator'     => '⚖ MOD',
+                'teacher_admin' => '📚 TCH ADM',
+                'teacher'       => '✏ TEACHER',
+                _               => role.toUpperCase(),
+              },
               style: TextStyle(color: _roleColor(role), fontSize: 9, fontWeight: FontWeight.w800)),
           ),
         ]),
@@ -3415,7 +4366,9 @@ class _AccessControlCard extends StatelessWidget {
             items: _roles,
             onChanged: (v) async {
               if (v == null) return;
-              final ok = await _confirm(context, 'Set ${user['name']}\'s role to "$v"?\n\n${v == 'super_admin' ? '⚠ This grants full platform control.' : ''}');
+              final desc = _roleDescriptions[v] ?? '';
+              final ok = await _confirm(context,
+                  'Set ${user['name']}\'s role to "$v"?\n\n$desc');
               if (!ok) return;
               try { await db.updateUserDoc(user['id'], {'role': v}); toast('✅ Role → $v'); }
               catch (e) { toast('❌ $e'); }
@@ -3468,3 +4421,1185 @@ class _AccessControlCard extends StatelessWidget {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 12. CONTENT OPS TAB — bulk import, scheduled publishing, version history,
+//     A/B experiments  (Phases 4.1–4.3, 4.5)
+// ═══════════════════════════════════════════════════════════════════════════════
+class _ContentTab extends StatefulWidget {
+  final FirestoreService db;
+  final Function(String) toast;
+  const _ContentTab(this.db, this.toast);
+  @override
+  State<_ContentTab> createState() => _ContentTabState();
+}
+
+class _ContentTabState extends State<_ContentTab> with SingleTickerProviderStateMixin {
+  late final TabController _innerTabs;
+
+  @override
+  void initState() {
+    super.initState();
+    _innerTabs = TabController(length: 4, vsync: this);
+  }
+
+  @override
+  void dispose() { _innerTabs.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    Container(
+      color: AppColors.navyMid,
+      child: TabBar(
+        controller: _innerTabs,
+        isScrollable: true,
+        tabs: const [
+          Tab(text: '📥 Import'),
+          Tab(text: '📅 Schedule'),
+          Tab(text: '🔖 History'),
+          Tab(text: '🧪 Experiments'),
+        ],
+        labelColor: AppColors.primary,
+        unselectedLabelColor: AppColors.textMuted,
+        indicatorColor: AppColors.primary,
+        indicatorSize: TabBarIndicatorSize.label,
+      ),
+    ),
+    Expanded(child: TabBarView(controller: _innerTabs, children: [
+      const BulkImportView(),
+      _ScheduledContentPane(db: widget.db, toast: widget.toast),
+      _VersionHistoryPane(db: widget.db, toast: widget.toast),
+      const ExperimentsView(),
+    ])),
+  ]);
+}
+
+// ── Scheduled content calendar list ───────────────────────────────────────────
+class _ScheduledContentPane extends StatelessWidget {
+  final FirestoreService db;
+  final Function(String) toast;
+  const _ScheduledContentPane({required this.db, required this.toast});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: db.getScheduledContent(),
+      builder: (ctx, snap) {
+        if (!snap.hasData) {
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary));
+        }
+        final items = snap.data!;
+        if (items.isEmpty) {
+          return const Center(
+            child: Padding(padding: EdgeInsets.all(24), child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('📅', style: TextStyle(fontSize: 40)),
+                SizedBox(height: 8),
+                Text('No scheduled content.',
+                    style: TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w600)),
+                SizedBox(height: 4),
+                Text(
+                  'Set a publishAt timestamp on news or live_class docs '
+                  'to schedule them for future publishing.',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            )),
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: items.length,
+          itemBuilder: (_, i) {
+            final item = items[i];
+            final publishAt = item['publishAt'] as Timestamp?;
+            final dt = publishAt?.toDate();
+            final timeStr = dt != null
+                ? '${dt.year}-${dt.month.toString().padLeft(2,'0')}-${dt.day.toString().padLeft(2,'0')} '
+                  '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}'
+                : '—';
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.cardBg,
+                borderRadius: BorderRadius.circular(AppRadius.xxl),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Row(children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.sky.withAlpha(30),
+                    borderRadius: BorderRadius.circular(AppRadius.pill),
+                  ),
+                  child: Text(item['collection'] as String? ?? '',
+                      style: const TextStyle(color: AppColors.sky,
+                          fontSize: 10, fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(width: 10),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(item['title'] as String? ?? '(untitled)',
+                      style: const TextStyle(fontWeight: FontWeight.w600,
+                          fontSize: 13, color: AppColors.textPrimary),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text('Publish at: $timeStr',
+                      style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                ])),
+                IconButton(
+                  icon: const Icon(Icons.cancel_outlined, color: AppColors.ruby, size: 18),
+                  tooltip: 'Unschedule',
+                  onPressed: () async {
+                    await FirebaseFirestore.instance
+                        .collection(item['collection'] as String)
+                        .doc(item['id'] as String)
+                        .update({'publishAt': FieldValue.delete(), 'status': 'draft'});
+                    toast('✅ Unscheduled');
+                  },
+                ),
+              ]),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+// ── Content Version History (Phase 4.3) ───────────────────────────────────────
+class _VersionHistoryPane extends StatefulWidget {
+  final FirestoreService db;
+  final Function(String) toast;
+  const _VersionHistoryPane({required this.db, required this.toast});
+  @override
+  State<_VersionHistoryPane> createState() => _VersionHistoryPaneState();
+}
+
+class _VersionHistoryPaneState extends State<_VersionHistoryPane> {
+  String _collection = 'news';
+  final _docIdCtrl = TextEditingController();
+  List<Map<String, dynamic>>? _versions;
+  bool _loading = false;
+
+  static const _collections = ['news', 'courses', 'live_classes', 'mock_tests'];
+
+  Future<void> _load() async {
+    final id = _docIdCtrl.text.trim();
+    if (id.isEmpty) { widget.toast('Enter a document ID'); return; }
+    setState(() { _loading = true; _versions = null; });
+    try {
+      final v = await widget.db.getContentVersions(_collection, id);
+      setState(() => _versions = v);
+    } catch (e) {
+      widget.toast('❌ $e');
+    } finally {
+      setState(() => _loading = false);
+    }
+  }
+
+  @override
+  void dispose() { _docIdCtrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      const Text('🔖 Content Version History',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary)),
+      const SizedBox(height: 4),
+      const Text(
+        'Browse and restore snapshots saved by the admin panel or Cloud Functions.',
+        style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+      ),
+      const SizedBox(height: 16),
+      Row(children: [
+        const Text('Collection:',
+            style: TextStyle(color: AppColors.textSecondary,
+                fontWeight: FontWeight.w600, fontSize: 13)),
+        const SizedBox(width: 10),
+        DropdownButton<String>(
+          value: _collection,
+          dropdownColor: AppColors.navyMid,
+          style: const TextStyle(
+              color: AppColors.textPrimary, fontSize: 13, fontWeight: FontWeight.w600),
+          underline: Container(height: 1, color: AppColors.border),
+          items: _collections
+              .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+              .toList(),
+          onChanged: (v) {
+            if (v != null) { setState(() { _collection = v; _versions = null; }); }
+          },
+        ),
+      ]),
+      const SizedBox(height: 10),
+      Row(children: [
+        Expanded(
+          child: TextField(
+            controller: _docIdCtrl,
+            style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
+            decoration: InputDecoration(
+              hintText: 'Document ID (e.g. abc123)',
+              hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+              filled: true,
+              fillColor: AppColors.navyLight,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                borderSide: const BorderSide(color: AppColors.border),
+              ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        ElevatedButton(
+          onPressed: _loading ? null : _load,
+          style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white),
+          child: _loading
+              ? const SizedBox(width: 16, height: 16,
+                  child: CircularProgressIndicator(
+                      color: Colors.white, strokeWidth: 2))
+              : const Text('Load'),
+        ),
+      ]),
+      const SizedBox(height: 16),
+      if (_versions != null) ...[
+        if (_versions!.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.navyLight,
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: const Text('No version history found for this document.',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                textAlign: TextAlign.center),
+          )
+        else
+          ...List.generate(_versions!.length, (i) {
+            final v = _versions![i];
+            final savedAt = v['savedAt'];
+            final ts = savedAt is Timestamp ? savedAt.toDate() : null;
+            final label = ts != null
+                ? '${ts.year}-${ts.month.toString().padLeft(2,'0')}-'
+                  '${ts.day.toString().padLeft(2,'0')} '
+                  '${ts.hour.toString().padLeft(2,'0')}:'
+                  '${ts.minute.toString().padLeft(2,'0')}'
+                : 'Version ${_versions!.length - i}';
+            final snap = v['snapshot'] as Map<String, dynamic>? ?? {};
+            final title = snap['title'] ?? snap['name'] ?? snap['heading'] ?? '—';
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.cardBg,
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withAlpha(20),
+                      borderRadius: BorderRadius.circular(AppRadius.pill),
+                    ),
+                    child: Text('v${_versions!.length - i}',
+                        style: const TextStyle(
+                            color: AppColors.primary,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800)),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(label,
+                      style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 12,
+                          fontFamily: 'monospace')),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () => _showRestoreDialog(context, snap),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.gold.withAlpha(20),
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                        border: Border.all(color: AppColors.gold.withAlpha(60)),
+                      ),
+                      child: const Text('Restore',
+                          style: TextStyle(
+                              color: AppColors.gold,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 6),
+                Text(title.toString(),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                        color: AppColors.textPrimary),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 4),
+                Text('${snap.keys.length} fields',
+                    style: const TextStyle(
+                        color: AppColors.textMuted, fontSize: 11)),
+              ]),
+            );
+          }),
+      ],
+    ]);
+  }
+
+  Future<void> _showRestoreDialog(
+      BuildContext context, Map<String, dynamic> snapshot) async {
+    final id = _docIdCtrl.text.trim();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.navyMid,
+        title: const Text('Restore this version?',
+            style: TextStyle(color: AppColors.textPrimary)),
+        content: const Text(
+          'The current document will be overwritten with this snapshot. '
+          'A new history entry will NOT be created automatically.',
+          style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Restore',
+                  style: TextStyle(color: AppColors.gold))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await widget.db.restoreContentVersion(_collection, id, snapshot);
+      widget.toast('✅ Version restored');
+      await _load();
+    } catch (e) {
+      widget.toast('❌ $e');
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 13. FINANCE TAB — refund flow, teacher payouts, tax export (Phases 5.2–5.4)
+// ═══════════════════════════════════════════════════════════════════════════════
+class _FinanceTab extends StatefulWidget {
+  final FirestoreService db;
+  final Function(String) toast;
+  const _FinanceTab(this.db, this.toast);
+  @override
+  State<_FinanceTab> createState() => _FinanceTabState();
+}
+
+class _FinanceTabState extends State<_FinanceTab> with SingleTickerProviderStateMixin {
+  late final TabController _innerTabs;
+
+  @override
+  void initState() {
+    super.initState();
+    _innerTabs = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() { _innerTabs.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    Container(
+      color: AppColors.navyMid,
+      child: TabBar(
+        controller: _innerTabs,
+        tabs: const [
+          Tab(text: '💳 Refunds'),
+          Tab(text: '👩‍🏫 Payouts'),
+        ],
+        labelColor: AppColors.primary,
+        unselectedLabelColor: AppColors.textMuted,
+        indicatorColor: AppColors.primary,
+        indicatorSize: TabBarIndicatorSize.label,
+      ),
+    ),
+    Expanded(child: TabBarView(controller: _innerTabs, children: [
+      _RefundsPane(db: widget.db, toast: widget.toast),
+      _PayoutsPane(db: widget.db, toast: widget.toast),
+    ])),
+  ]);
+}
+
+// ── Refunds pane ─────────────────────────────────────────────────────────────
+class _RefundsPane extends StatelessWidget {
+  final FirestoreService db;
+  final Function(String) toast;
+  const _RefundsPane({required this.db, required this.toast});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: db.listenAllTransactions(),
+      builder: (ctx, snap) {
+        if (!snap.hasData) {
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary));
+        }
+        final txns = snap.data!;
+        return Scaffold(
+          backgroundColor: Colors.transparent,
+          floatingActionButton: FloatingActionButton.extended(
+            backgroundColor: AppColors.primary,
+            icon: const Icon(Icons.download, color: Colors.white),
+            label: const Text('Tax Export CSV',
+                style: TextStyle(color: Colors.white)),
+            onPressed: () async {
+              try {
+                await CsvExporter.exportAndShare(txns, 'Transactions_Tax');
+                toast('✅ Tax CSV exported');
+              } catch (e) { toast('❌ $e'); }
+            },
+          ),
+          body: ListView.builder(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+            itemCount: txns.length,
+            itemBuilder: (_, i) {
+              final tx = txns[i];
+              final coins = tx['coins'] as int? ?? 0;
+              final ts = tx['createdAt'] as Timestamp?;
+              final dt = ts?.toDate();
+              final timeStr = dt != null
+                  ? '${dt.year}-${dt.month.toString().padLeft(2,'0')}-${dt.day.toString().padLeft(2,'0')}'
+                  : '—';
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.cardBg,
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Row(children: [
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(tx['description'] as String? ?? '',
+                        style: const TextStyle(fontSize: 12,
+                            color: AppColors.textPrimary),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(timeStr,
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                  ])),
+                  Text('${coins >= 0 ? "+" : ""}$coins 🪙',
+                      style: TextStyle(
+                          color: coins >= 0 ? AppColors.emerald : AppColors.ruby,
+                          fontWeight: FontWeight.w700, fontSize: 12)),
+                  const SizedBox(width: 8),
+                  // Refund button — only show for topup/admin_award
+                  if ((tx['type'] as String? ?? '').contains('topup') ||
+                      (tx['type'] as String? ?? '').contains('award'))
+                    GestureDetector(
+                      onTap: () => _showRefundDialog(context, tx),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.ruby.withAlpha(20),
+                          borderRadius:
+                              BorderRadius.circular(AppRadius.pill),
+                          border: Border.all(
+                              color: AppColors.ruby.withAlpha(60)),
+                        ),
+                        child: const Text('Refund',
+                            style: TextStyle(
+                                color: AppColors.ruby,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                ]),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  void _showRefundDialog(BuildContext context, Map<String, dynamic> tx) {
+    final reasonCtrl = TextEditingController();
+    final coinsCtrl = TextEditingController(
+        text: '${(tx['coins'] as int? ?? 0).abs()}');
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.navyMid,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+            left: 16, right: 16, top: 20),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const Text('💸 Issue Refund',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary)),
+          const SizedBox(height: 4),
+          Text('Transaction: ${tx['description'] ?? ''}',
+              style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          const SizedBox(height: 14),
+          TextField(
+            controller: coinsCtrl,
+            keyboardType: TextInputType.number,
+            style: const TextStyle(color: AppColors.textPrimary),
+            decoration: const InputDecoration(labelText: 'Coins to deduct'),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: reasonCtrl,
+            style: const TextStyle(color: AppColors.textPrimary),
+            decoration: const InputDecoration(labelText: 'Reason'),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.ruby),
+            onPressed: () async {
+              final coins = int.tryParse(coinsCtrl.text.trim()) ?? 0;
+              if (coins <= 0) return;
+              final uid = tx['uid'] as String? ?? '';
+              Navigator.pop(ctx);
+              try {
+                await db.adminRefundCoins(
+                    uid, coins, reasonCtrl.text.trim(),
+                    FirebaseAuth.instance.currentUser?.uid ?? '');
+                toast('✅ Refunded $coins coins from $uid');
+              } catch (e) { toast('❌ $e'); }
+            },
+            child: const Text('Issue Refund'),
+          ),
+          const SizedBox(height: 24),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── Teacher payouts pane ──────────────────────────────────────────────────────
+class _PayoutsPane extends StatelessWidget {
+  final FirestoreService db;
+  final Function(String) toast;
+  const _PayoutsPane({required this.db, required this.toast});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: db.getTeacherPayouts(),
+      builder: (ctx, snap) {
+        if (!snap.hasData) {
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary));
+        }
+        final payouts = snap.data!;
+        if (payouts.isEmpty) {
+          return const Center(
+            child: Padding(padding: EdgeInsets.all(24), child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('👩‍🏫', style: TextStyle(fontSize: 40)),
+                SizedBox(height: 8),
+                Text('No teacher payout data.',
+                    style: TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w600)),
+                SizedBox(height: 4),
+                Text(
+                  'Payout data is derived from spend transactions with a teacherId field.',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            )),
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: payouts.length,
+          itemBuilder: (_, i) {
+            final p = payouts[i];
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.cardBg,
+                borderRadius: BorderRadius.circular(AppRadius.xxl),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Row(children: [
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor: AppColors.sky.withAlpha(51),
+                  child: Text(
+                    (p['teacherName'] as String? ?? 'T').substring(0, 1).toUpperCase(),
+                    style: const TextStyle(color: AppColors.sky,
+                        fontWeight: FontWeight.w800),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(p['teacherName'] as String? ?? p['teacherId'] as String? ?? '',
+                      style: const TextStyle(fontWeight: FontWeight.w700,
+                          fontSize: 13, color: AppColors.textPrimary)),
+                  Text('${p['count']} enrollments this month',
+                      style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                ])),
+                Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  Text('🪙 ${p['totalCoins']}',
+                      style: const TextStyle(color: AppColors.gold,
+                          fontWeight: FontWeight.w800, fontSize: 15)),
+                  const Text('earned', style: TextStyle(color: AppColors.textMuted, fontSize: 10)),
+                ]),
+              ]),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 14. MODERATION TAB — submission queue, news review, block/unblock (Phases 6.1–6.4)
+// ═══════════════════════════════════════════════════════════════════════════════
+class _ModerationTab extends StatefulWidget {
+  final FirestoreService db;
+  final Function(String) toast;
+  const _ModerationTab(this.db, this.toast);
+  @override
+  State<_ModerationTab> createState() => _ModerationTabState();
+}
+
+class _ModerationTabState extends State<_ModerationTab> with SingleTickerProviderStateMixin {
+  late final TabController _innerTabs;
+
+  @override
+  void initState() {
+    super.initState();
+    _innerTabs = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() { _innerTabs.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    Container(
+      color: AppColors.navyMid,
+      child: TabBar(
+        controller: _innerTabs,
+        tabs: const [
+          Tab(text: '📝 Submissions'),
+          Tab(text: '📰 News Review'),
+        ],
+        labelColor: AppColors.primary,
+        unselectedLabelColor: AppColors.textMuted,
+        indicatorColor: AppColors.primary,
+        indicatorSize: TabBarIndicatorSize.label,
+      ),
+    ),
+    Expanded(child: TabBarView(controller: _innerTabs, children: [
+      _SubmissionModerationPane(db: widget.db, toast: widget.toast),
+      _NewsPendingPane(db: widget.db, toast: widget.toast),
+    ])),
+  ]);
+}
+
+// ── Submission moderation pane ────────────────────────────────────────────────
+class _SubmissionModerationPane extends StatefulWidget {
+  final FirestoreService db;
+  final Function(String) toast;
+  const _SubmissionModerationPane({required this.db, required this.toast});
+  @override
+  State<_SubmissionModerationPane> createState() => _SubmissionModerationPaneState();
+}
+
+class _SubmissionModerationPaneState extends State<_SubmissionModerationPane> {
+  bool _showFlaggedOnly = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      // Filter bar
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+        child: Row(children: [
+          const Text('Show flagged only',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+          const Spacer(),
+          Switch(
+            value: _showFlaggedOnly,
+            activeTrackColor: AppColors.ruby,
+            onChanged: (v) => setState(() => _showFlaggedOnly = v),
+          ),
+        ]),
+      ),
+      Expanded(
+        child: StreamBuilder<List<Map<String, dynamic>>>(
+          stream: widget.db.listenAllSubmissions(),
+          builder: (ctx, snap) {
+            if (!snap.hasData) {
+              return const Center(
+                  child: CircularProgressIndicator(color: AppColors.primary));
+            }
+            var subs = snap.data!;
+            if (_showFlaggedOnly) {
+              subs = subs.where((s) => s['flagged'] == true).toList();
+            }
+            if (subs.isEmpty) {
+              return Center(
+                child: Text(
+                  _showFlaggedOnly
+                      ? 'No flagged submissions.'
+                      : 'No submissions yet.',
+                  style: const TextStyle(color: AppColors.textMuted),
+                ),
+              );
+            }
+            return ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: subs.length,
+              itemBuilder: (_, i) {
+                final s = subs[i];
+                final flagged = s['flagged'] as bool? ?? false;
+                final hidden = s['hidden'] as bool? ?? false;
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: flagged
+                        ? AppColors.ruby.withAlpha(10)
+                        : AppColors.cardBg,
+                    borderRadius:
+                        BorderRadius.circular(AppRadius.lg),
+                    border: Border.all(
+                        color: flagged
+                            ? AppColors.ruby.withAlpha(60)
+                            : AppColors.border),
+                  ),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      Expanded(child: Text(
+                        s['title'] as String? ?? s['studentName'] as String? ?? 'Submission',
+                        style: const TextStyle(fontWeight: FontWeight.w600,
+                            fontSize: 13, color: AppColors.textPrimary),
+                      )),
+                      if (flagged)
+                        const Icon(Icons.flag, color: AppColors.ruby, size: 16),
+                      if (hidden)
+                        Container(
+                          margin: const EdgeInsets.only(left: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppColors.ruby.withAlpha(20),
+                            borderRadius: BorderRadius.circular(AppRadius.pill),
+                          ),
+                          child: const Text('HIDDEN',
+                              style: TextStyle(color: AppColors.ruby,
+                                  fontSize: 9, fontWeight: FontWeight.w800)),
+                        ),
+                    ]),
+                    const SizedBox(height: 4),
+                    Text(
+                      s['studentName'] as String? ?? s['uid'] as String? ?? '',
+                      style: const TextStyle(
+                          color: AppColors.textMuted, fontSize: 11),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      if (!flagged)
+                        _ModBtn('🚩 Flag & Hide', AppColors.ruby, () async {
+                          await widget.db.flagSubmission(s['id'], hidden: true);
+                          widget.toast('🚩 Flagged and hidden');
+                        })
+                      else ...[
+                        _ModBtn('✅ Unflag', AppColors.emerald, () async {
+                          await widget.db.unflagSubmission(s['id']);
+                          widget.toast('✅ Unflagged');
+                        }),
+                        const SizedBox(width: 6),
+                        _ModBtn(hidden ? '👁 Show' : '🙈 Hide', AppColors.gold, () async {
+                          await widget.db.flagSubmission(s['id'], hidden: !hidden);
+                          widget.toast(hidden ? '✅ Shown' : '🙈 Hidden');
+                        }),
+                      ],
+                    ]),
+                  ]),
+                );
+              },
+            );
+          },
+        ),
+      ),
+    ]);
+  }
+}
+
+class _ModBtn extends StatelessWidget {
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+  const _ModBtn(this.label, this.color, this.onTap);
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+        border: Border.all(color: color.withAlpha(60)),
+      ),
+      child: Text(label,
+          style: TextStyle(color: color, fontSize: 11,
+              fontWeight: FontWeight.w700)),
+    ),
+  );
+}
+
+// ── Pending news review pane ─────────────────────────────────────────────────
+class _NewsPendingPane extends StatelessWidget {
+  final FirestoreService db;
+  final Function(String) toast;
+  const _NewsPendingPane({required this.db, required this.toast});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: db.listenPendingNews(),
+      builder: (ctx, snap) {
+        if (!snap.hasData) {
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary));
+        }
+        final news = snap.data!;
+        if (news.isEmpty) {
+          return const Center(
+            child: Padding(padding: EdgeInsets.all(24), child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('📰', style: TextStyle(fontSize: 40)),
+                SizedBox(height: 8),
+                Text('No news awaiting approval.',
+                    style: TextStyle(color: AppColors.textMuted)),
+              ],
+            )),
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: news.length,
+          itemBuilder: (_, i) {
+            final n = news[i];
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.cardBg,
+                borderRadius: BorderRadius.circular(AppRadius.xxl),
+                border: Border.all(color: AppColors.gold.withAlpha(80)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(n['title'] as String? ?? '(untitled)',
+                    style: const TextStyle(fontWeight: FontWeight.w700,
+                        fontSize: 13, color: AppColors.textPrimary)),
+                const SizedBox(height: 4),
+                Text(
+                  n['content'] as String? ?? '',
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  maxLines: 2, overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 10),
+                Row(children: [
+                  _ModBtn('✅ Approve', AppColors.emerald, () async {
+                    await db.setNewsStatus(n['id'], 'published');
+                    toast('✅ News approved');
+                  }),
+                  const SizedBox(width: 6),
+                  _ModBtn('❌ Reject', AppColors.ruby, () async {
+                    await db.setNewsStatus(n['id'], 'rejected');
+                    toast('News rejected');
+                  }),
+                ]),
+              ]),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 15. SYSTEM TAB — feature flags, maintenance mode (Phases 7.1–7.2)
+// ═══════════════════════════════════════════════════════════════════════════════
+class _SystemTab extends StatefulWidget {
+  final FirestoreService db;
+  final Function(String) toast;
+  const _SystemTab(this.db, this.toast);
+  @override
+  State<_SystemTab> createState() => _SystemTabState();
+}
+
+class _SystemTabState extends State<_SystemTab> with SingleTickerProviderStateMixin {
+  late final TabController _innerTabs;
+
+  @override
+  void initState() {
+    super.initState();
+    _innerTabs = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() { _innerTabs.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    Container(
+      color: AppColors.navyMid,
+      child: TabBar(
+        controller: _innerTabs,
+        tabs: const [
+          Tab(text: '🚦 Feature Flags'),
+          Tab(text: '🚧 Maintenance'),
+        ],
+        labelColor: AppColors.primary,
+        unselectedLabelColor: AppColors.textMuted,
+        indicatorColor: AppColors.primary,
+        indicatorSize: TabBarIndicatorSize.label,
+      ),
+    ),
+    Expanded(child: TabBarView(controller: _innerTabs, children: [
+      _FeatureFlagsPane(db: widget.db, toast: widget.toast),
+      _MaintenancePane(db: widget.db, toast: widget.toast),
+    ])),
+  ]);
+}
+
+// ── Feature flags pane ────────────────────────────────────────────────────────
+class _FeatureFlagsPane extends StatelessWidget {
+  final FirestoreService db;
+  final Function(String) toast;
+  const _FeatureFlagsPane({required this.db, required this.toast});
+
+  static const _knownFlags = [
+    ('pyqEnabled',       'PYQs',           'Show Previous Year Questions'),
+    ('battleEnabled',    'Battles',        'Enable battle challenges between users'),
+    ('liveClassEnabled', 'Live Classes',   'Show live classes calendar'),
+    ('writingEnabled',   'Writing',        'Allow writing submissions'),
+    ('groupsEnabled',    'Groups',         'Enable student groups'),
+    ('newsEnabled',      'News',           'Show news feed'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<Map<String, dynamic>>(
+      stream: db.listenFeatureFlags(),
+      builder: (ctx, snap) {
+        if (!snap.hasData) {
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary));
+        }
+        final flags = snap.data!;
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withAlpha(15),
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                border: Border.all(color: AppColors.primary.withAlpha(40)),
+              ),
+              child: const Row(children: [
+                Icon(Icons.info_outline, color: AppColors.primary, size: 16),
+                SizedBox(width: 8),
+                Expanded(child: Text(
+                  'Flags propagate to all app clients within ~30 seconds '
+                  'via the global settings listener.',
+                  style: TextStyle(color: AppColors.primary, fontSize: 12),
+                )),
+              ]),
+            ),
+            ..._knownFlags.map((f) {
+              final (key, label, desc) = f;
+              final enabled = flags[key] as bool? ?? true;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.cardBg,
+                  borderRadius: BorderRadius.circular(AppRadius.lg),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Row(children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: enabled ? AppColors.emerald : AppColors.ruby,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(label,
+                          style: const TextStyle(fontWeight: FontWeight.w700,
+                              fontSize: 13, color: AppColors.textPrimary)),
+                      Text(desc,
+                          style: const TextStyle(color: AppColors.textMuted,
+                              fontSize: 11)),
+                      Text('key: $key',
+                          style: const TextStyle(color: AppColors.textMuted,
+                              fontSize: 10, fontFamily: 'monospace')),
+                    ],
+                  )),
+                  Switch(
+                    value: enabled,
+                    activeTrackColor: AppColors.emerald,
+                    onChanged: (v) async {
+                      await db.setFeatureFlag(key, v);
+                      toast('✅ $label ${v ? 'enabled' : 'disabled'}');
+                    },
+                  ),
+                ]),
+              );
+            }),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// ── Maintenance mode pane ─────────────────────────────────────────────────────
+class _MaintenancePane extends StatefulWidget {
+  final FirestoreService db;
+  final Function(String) toast;
+  const _MaintenancePane({required this.db, required this.toast});
+  @override
+  State<_MaintenancePane> createState() => _MaintenancePaneState();
+}
+
+class _MaintenancePaneState extends State<_MaintenancePane> {
+  final _msgCtrl = TextEditingController();
+  bool _saving = false;
+
+  @override
+  void dispose() { _msgCtrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<Map<String, dynamic>>(
+      stream: widget.db.listenMaintenanceMode(),
+      builder: (ctx, snap) {
+        final data = snap.data ?? {'enabled': false, 'message': ''};
+        final enabled = data['enabled'] as bool? ?? false;
+        if (_msgCtrl.text.isEmpty && (data['message'] as String? ?? '').isNotEmpty) {
+          _msgCtrl.text = data['message'] as String;
+        }
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: enabled
+                    ? AppColors.ruby.withAlpha(15)
+                    : AppColors.cardBg,
+                borderRadius: BorderRadius.circular(AppRadius.xxl),
+                border: Border.all(
+                    color: enabled
+                        ? AppColors.ruby.withAlpha(80)
+                        : AppColors.border),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Icon(
+                    enabled ? Icons.construction : Icons.check_circle_outline,
+                    color: enabled ? AppColors.ruby : AppColors.emerald,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    enabled ? '🚧 Maintenance Mode ON' : '✅ App is Live',
+                    style: TextStyle(
+                      color: enabled ? AppColors.ruby : AppColors.emerald,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const Spacer(),
+                  Switch(
+                    value: enabled,
+                    activeTrackColor: AppColors.ruby,
+                    onChanged: (v) async {
+                      setState(() => _saving = true);
+                      await widget.db.setMaintenanceMode(
+                          enabled: v, message: _msgCtrl.text.trim());
+                      setState(() => _saving = false);
+                      widget.toast(v
+                          ? '🚧 Maintenance mode activated'
+                          : '✅ App back online');
+                    },
+                  ),
+                ]),
+                const SizedBox(height: 14),
+                const Text('Banner message shown to users:',
+                    style: TextStyle(color: AppColors.textSecondary,
+                        fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _msgCtrl,
+                  maxLines: 3,
+                  style: const TextStyle(
+                      color: AppColors.textPrimary, fontSize: 13),
+                  decoration: const InputDecoration(
+                    hintText: 'e.g. We are performing maintenance. '
+                        'Service resumes at 2pm NPT.',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _saving
+                    ? const Center(
+                        child: CircularProgressIndicator(
+                            color: AppColors.primary))
+                    : ElevatedButton(
+                        onPressed: () async {
+                          setState(() => _saving = true);
+                          await widget.db.setMaintenanceMode(
+                              enabled: enabled,
+                              message: _msgCtrl.text.trim());
+                          setState(() => _saving = false);
+                          widget.toast('✅ Maintenance message updated');
+                        },
+                        child: const Text('Save message'),
+                      ),
+              ]),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
