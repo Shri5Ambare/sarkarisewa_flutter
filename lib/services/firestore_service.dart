@@ -1155,7 +1155,7 @@ class FirestoreService {
     if (newBadge != null) {
       badges.add(newBadge);
       await updateUserDoc(uid, {'badges': badges});
-      
+
       // Optionally log badge award to transactions for history
       await _db.collection('transactions').add({
         'uid': uid,
@@ -1169,4 +1169,380 @@ class FirestoreService {
     }
     return null;
   }
+
+  // ── COHORT RETENTION (Phase 2.3) ──────────────────────────────────
+
+  /// Fetch the last [weeks] cohort retention documents.
+  /// Each doc id is `YYYY-Wnn`; fields: cohortSize, retentionW1…W8.
+  Future<List<Map<String, dynamic>>> getCohortRetention({int weeks = 8}) async {
+    final snap = await _db.collection('cohort_retention')
+        .orderBy(FieldPath.documentId, descending: true)
+        .limit(weeks)
+        .get();
+    final list = snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+    list.sort((a, b) => (a['id'] as String).compareTo(b['id'] as String));
+    return list;
+  }
+
+  // ── CONVERSION FUNNEL (Phase 2.4) ─────────────────────────────────
+
+  /// Fetch the latest funnel snapshot — counts for each conversion step.
+  /// Written by the `computeDailyFunnel` Cloud Function.
+  Future<Map<String, dynamic>> getFunnelStats() async {
+    final snap = await _db.collection('funnel_stats')
+        .orderBy(FieldPath.documentId, descending: true)
+        .limit(1)
+        .get();
+    if (snap.docs.isEmpty) return {};
+    return {'id': snap.docs.first.id, ...snap.docs.first.data()};
+  }
+
+  // ── BULK USER OPS (Phase 3.2) ──────────────────────────────────────
+
+  /// Batch-update a list of user docs with the same fields.
+  Future<void> bulkUpdateUserField(List<String> uids, Map<String, dynamic> fields) async {
+    var batch = _db.batch();
+    int count = 0;
+    for (final uid in uids) {
+      batch.update(_db.collection('users').doc(uid), fields);
+      count++;
+      if (count >= 499) {
+        await batch.commit();
+        batch = _db.batch();
+        count = 0;
+      }
+    }
+    if (count > 0) await batch.commit();
+  }
+
+  /// Award coins to a specific list of users.
+  Future<void> bulkAwardCoinsToUsers(
+      List<String> uids, int coins, String reason) async {
+    var batch = _db.batch();
+    int count = 0;
+    for (final uid in uids) {
+      batch.update(_db.collection('users').doc(uid),
+          {'coins': FieldValue.increment(coins)});
+      batch.set(_db.collection('transactions').doc(), {
+        'uid':         uid,
+        'type':        'admin_award',
+        'coins':       coins,
+        'amount':      0,
+        'description': 'Bulk award: $reason (+$coins coins)',
+        'createdAt':   FieldValue.serverTimestamp(),
+      });
+      count += 2;
+      if (count >= 498) {
+        await batch.commit();
+        batch = _db.batch();
+        count = 0;
+      }
+    }
+    if (count > 0) await batch.commit();
+  }
+
+  // ── USER SEGMENTS (Phase 3.4) ──────────────────────────────────────
+
+  Stream<List<Map<String, dynamic>>> listenAdminSegments() =>
+      _db.collection('admin_segments')
+          .orderBy('createdAt', descending: false)
+          .snapshots()
+          .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
+
+  Future<void> saveAdminSegment(String name, Map<String, dynamic> filters) =>
+      _db.collection('admin_segments').add({
+        'name':      name,
+        'filters':   filters,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+  Future<void> deleteAdminSegment(String id) =>
+      _db.collection('admin_segments').doc(id).delete();
+
+  // ── GDPR (Phase 3.5) ──────────────────────────────────────────────
+
+  /// Pull all data for one user: doc + transactions + test results.
+  Future<Map<String, dynamic>> exportUserData(String uid) async {
+    final userSnap = await _db.collection('users').doc(uid).get();
+    final rest = await Future.wait([
+      _db.collection('transactions').where('uid', isEqualTo: uid).get(),
+      _db.collection('mock_test_results').where('uid', isEqualTo: uid).get(),
+      _db.collection('orders').where('studentId', isEqualTo: uid).get(),
+    ]);
+    return {
+      'user':         userSnap.data() ?? {},
+      'transactions': rest[0].docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+      'testResults':  rest[1].docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+      'orders':       rest[2].docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+    };
+  }
+
+  // ── REFUND (Phase 5.2) ─────────────────────────────────────────────
+
+  Future<void> adminRefundCoins(
+      String uid, int coins, String reason, String adminUid) async {
+    final batch = _db.batch();
+    batch.update(_db.collection('users').doc(uid),
+        {'coins': FieldValue.increment(-coins)});
+    batch.set(_db.collection('transactions').doc(), {
+      'uid':         uid,
+      'type':        'refund',
+      'coins':       -coins,
+      'amount':      0,
+      'description': 'Admin refund: $reason (-$coins coins)',
+      'adminUid':    adminUid,
+      'createdAt':   FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+  }
+
+  // ── TEACHER PAYOUTS (Phase 5.3) ────────────────────────────────────
+
+  /// Aggregate spend transactions per teacher for the current month.
+  Future<List<Map<String, dynamic>>> getTeacherPayouts() async {
+    final start = DateTime.now();
+    final firstOfMonth = DateTime(start.year, start.month, 1);
+    final snap = await _db.collection('transactions')
+        .where('type', isEqualTo: 'spend')
+        .where('createdAt',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(firstOfMonth))
+        .get();
+    final totals = <String, Map<String, dynamic>>{};
+    for (final doc in snap.docs) {
+      final tid = doc.data()['teacherId'] as String? ?? '';
+      if (tid.isEmpty) continue;
+      totals.putIfAbsent(
+          tid,
+          () => {
+                'teacherId':   tid,
+                'teacherName': doc.data()['teacherName'] ?? '',
+                'totalCoins':  0,
+                'count':       0,
+              });
+      totals[tid]!['totalCoins'] =
+          (totals[tid]!['totalCoins'] as int) + ((doc.data()['coins'] as num?)?.toInt() ?? 0);
+      totals[tid]!['count'] = (totals[tid]!['count'] as int) + 1;
+    }
+    return totals.values.toList()
+      ..sort((a, b) => (b['totalCoins'] as int).compareTo(a['totalCoins'] as int));
+  }
+
+  // ── SUBMISSION MODERATION (Phase 6.1) ─────────────────────────────
+
+  Future<void> flagSubmission(String id, {required bool hidden}) =>
+      _db.collection('submissions').doc(id).update({
+        'flagged': true,
+        'hidden':  hidden,
+        'flaggedAt': FieldValue.serverTimestamp(),
+      });
+
+  Future<void> unflagSubmission(String id) =>
+      _db.collection('submissions').doc(id).update({
+        'flagged': false,
+        'hidden':  false,
+        'flaggedAt': FieldValue.delete(),
+      });
+
+  // ── NEWS PRE-PUBLISH (Phase 6.2) ───────────────────────────────────
+
+  Future<void> setNewsStatus(String id, String status) =>
+      _db.collection('news').doc(id).update({
+        'status':    status,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+  Stream<List<Map<String, dynamic>>> listenPendingNews() =>
+      _db.collection('news')
+          .where('status', isEqualTo: 'pending_approval')
+          .orderBy('createdAt', descending: true)
+          .snapshots()
+          .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
+
+  // ── BLOCK / UNBLOCK USER (Phase 6.4) ──────────────────────────────
+
+  Future<void> setUserBlocked(String uid, {required bool blocked}) =>
+      _db.collection('users').doc(uid).update({
+        'disabled':    blocked,
+        'disabledAt':  blocked ? FieldValue.serverTimestamp() : FieldValue.delete(),
+      });
+
+  // ── FEATURE FLAGS (Phase 7.1) ──────────────────────────────────────
+
+  Stream<Map<String, dynamic>> listenFeatureFlags() =>
+      _db.collection('settings').doc('feature_flags').snapshots().map(
+        (s) => s.data() ?? {},
+      );
+
+  Future<void> setFeatureFlag(String key, bool value) =>
+      _db.collection('settings').doc('feature_flags').set(
+        {key: value},
+        SetOptions(merge: true),
+      );
+
+  // ── MAINTENANCE MODE (Phase 7.2) ──────────────────────────────────
+
+  Stream<Map<String, dynamic>> listenMaintenanceMode() =>
+      _db.collection('settings').doc('maintenance').snapshots().map(
+        (s) => s.data() ?? {'enabled': false, 'message': ''},
+      );
+
+  Future<void> setMaintenanceMode({required bool enabled, String message = ''}) =>
+      _db.collection('settings').doc('maintenance').set({
+        'enabled': enabled,
+        'message': message,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+  // ── CONTENT VERSION HISTORY (Phase 4.3) ───────────────────────────
+
+  Future<void> saveContentVersion(
+      String collection, String docId, Map<String, dynamic> snapshot) =>
+      _db
+          .collection(collection)
+          .doc(docId)
+          .collection('_history')
+          .add({
+            'snapshot':  snapshot,
+            'savedAt':   FieldValue.serverTimestamp(),
+          });
+
+  Future<List<Map<String, dynamic>>> getContentVersions(
+      String collection, String docId) async {
+    final snap = await _db
+        .collection(collection)
+        .doc(docId)
+        .collection('_history')
+        .orderBy('savedAt', descending: true)
+        .limit(20)
+        .get();
+    return snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+  }
+
+  Future<void> restoreContentVersion(
+      String collection, String docId, Map<String, dynamic> snapshot) async {
+    final data = Map<String, dynamic>.from(snapshot);
+    data.remove('id');
+    data['restoredAt'] = FieldValue.serverTimestamp();
+    await _db.collection(collection).doc(docId).update(data);
+  }
+
+  // ── SCHEDULED CONTENT (Phase 4.2) ─────────────────────────────────
+
+  Future<void> scheduleContent(
+      String collection, String docId, DateTime publishAt) =>
+      _db.collection(collection).doc(docId).update({
+        'publishAt': Timestamp.fromDate(publishAt),
+        'status':    'scheduled',
+      });
+
+  Future<List<Map<String, dynamic>>> getScheduledContent() async {
+    final now = Timestamp.fromDate(DateTime.now());
+    final results = await Future.wait([
+      _db.collection('news')
+          .where('publishAt', isGreaterThan: now)
+          .orderBy('publishAt')
+          .limit(50)
+          .get(),
+      _db.collection('live_classes')
+          .where('publishAt', isGreaterThan: now)
+          .orderBy('publishAt')
+          .limit(50)
+          .get(),
+    ]);
+    final out = <Map<String, dynamic>>[];
+    for (final doc in results[0].docs) {
+      out.add({'id': doc.id, 'collection': 'news', ...doc.data()});
+    }
+    for (final doc in results[1].docs) {
+      out.add({'id': doc.id, 'collection': 'live_classes', ...doc.data()});
+    }
+    out.sort((a, b) {
+      final ta = a['publishAt'] as Timestamp?;
+      final tb = b['publishAt'] as Timestamp?;
+      if (ta == null || tb == null) return 0;
+      return ta.compareTo(tb);
+    });
+    return out;
+  }
+
+  // ── A/B EXPERIMENTS (Phase 4.5) ───────────────────────────────────
+
+  Stream<List<Map<String, dynamic>>> listenExperiments() =>
+      _db.collection('experiments')
+          .orderBy('createdAt', descending: true)
+          .snapshots()
+          .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
+
+  Future<void> saveExperiment(String? id, Map<String, dynamic> data) async {
+    data['updatedAt'] = FieldValue.serverTimestamp();
+    if (id == null) {
+      data['createdAt'] = FieldValue.serverTimestamp();
+      await _db.collection('experiments').add(data);
+    } else {
+      await _db.collection('experiments').doc(id).set(data, SetOptions(merge: true));
+    }
+  }
+
+  Future<void> deleteExperiment(String id) =>
+      _db.collection('experiments').doc(id).delete();
+
+  // ── BULK IMPORT (Phase 4.1) ────────────────────────────────────────
+
+  /// Dry-run: validates docs without writing. Returns list of issues.
+  List<String> validateImportDocs(
+      String collection, List<Map<String, dynamic>> docs) {
+    final issues = <String>[];
+    final requiredFields = switch (collection) {
+      'courses'       => ['title', 'description'],
+      'news'          => ['title', 'content'],
+      'mock_tests'    => ['title', 'questions'],
+      'pyqs'          => ['title', 'year'],
+      'live_classes'  => ['title', 'startAt'],
+      _               => <String>[],
+    };
+    for (var i = 0; i < docs.length; i++) {
+      for (final field in requiredFields) {
+        if (!docs[i].containsKey(field) || docs[i][field] == null) {
+          issues.add('Row ${i + 1}: missing required field "$field"');
+        }
+      }
+    }
+    return issues;
+  }
+
+  /// Commit validated docs to Firestore.
+  Future<int> bulkImportDocs(
+      String collection, List<Map<String, dynamic>> docs) async {
+    var batch = _db.batch();
+    int count = 0;
+    int committed = 0;
+    for (final doc in docs) {
+      final ref = _db.collection(collection).doc();
+      batch.set(ref, {
+        ...doc,
+        'importedAt': FieldValue.serverTimestamp(),
+        'createdAt':  FieldValue.serverTimestamp(),
+      });
+      count++;
+      committed++;
+      if (count >= 499) {
+        await batch.commit();
+        batch = _db.batch();
+        count = 0;
+      }
+    }
+    if (count > 0) await batch.commit();
+    return committed;
+  }
+
+  // ── ADMIN SESSION LOG (Phase 8.4) ─────────────────────────────────
+
+  Stream<List<Map<String, dynamic>>> listenAdminAuditLog(String adminUid,
+      {int limit = 50}) =>
+      _db.collection('audit_log')
+          .where('adminUid', isEqualTo: adminUid)
+          .orderBy('timestamp', descending: true)
+          .limit(limit)
+          .snapshots()
+          .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
 }

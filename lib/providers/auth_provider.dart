@@ -26,12 +26,16 @@ class AuthProvider extends ChangeNotifier {
   bool                    get isLoggedIn  => _user != null;
   String get role => _profile?['role'] ?? 'guest';
   String get tier => _profile?['tier'] ?? 'free';
-  bool   get isAdmin       => role == 'admin';
-  bool   get isTeacher     => role == 'teacher';
-  bool   get isStudent     => role == 'student';
-  bool   get isSuperAdmin  => role == 'super_admin';
+  bool   get isAdmin        => role == 'admin';
+  bool   get isTeacher      => role == 'teacher';
+  bool   get isStudent      => role == 'student';
+  bool   get isSuperAdmin   => role == 'super_admin';
+  bool   get isModerator    => role == 'moderator';
+  bool   get isFinance      => role == 'finance';
+  bool   get isTeacherAdmin => role == 'teacher_admin';
   /// True for both admin and super_admin — used for routing guards.
-  bool   get isAdminLevel  => role == 'admin' || role == 'super_admin';
+  bool   get isAdminLevel  => role == 'admin' || role == 'super_admin' ||
+      role == 'moderator' || role == 'finance' || role == 'teacher_admin';
 
   AuthProvider() {
     _authService.authStateChanges.listen(_onAuthChanged);
