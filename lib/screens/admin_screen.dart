@@ -23,6 +23,7 @@ import '../widgets/paginated_list.dart';
 // import '../services/cloudinary_service.dart';
 import '../services/r2_storage_service.dart';
 import '../services/csv_exporter.dart';
+import '../services/seed_service.dart';
 import 'dart:convert';
 
 import 'package:fl_chart/fl_chart.dart';
@@ -365,6 +366,18 @@ class _DashboardTab extends StatelessWidget {
           _QuickAction(Icons.campaign, 'Broadcast Push Notification', AppColors.saffron, () => _showPushDialog(context)),
           const SizedBox(height: 8),
           _QuickAction(Icons.refresh, 'Refresh Stats', AppColors.sky, () => (ctx as Element).markNeedsBuild()),
+          const SizedBox(height: 24),
+          const Divider(color: AppColors.border),
+          const SizedBox(height: 8),
+          const Text('🧪 Demo Data', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textMuted)),
+          const SizedBox(height: 4),
+          const Text(
+            'Seed fake data so you can test every admin tab. '
+            'All seeded documents carry a _seeded flag and can be wiped in one tap.',
+            style: TextStyle(color: AppColors.textMuted, fontSize: 11),
+          ),
+          const SizedBox(height: 10),
+          _SeedPanel(db: db),
         ],
       );
     },
@@ -521,6 +534,129 @@ class _QuickAction extends StatelessWidget {
       ]),
     ),
   );
+}
+
+// ── Seed / Delete demo data panel ────────────────────────────────────────────
+class _SeedPanel extends StatefulWidget {
+  final FirestoreService db;
+  const _SeedPanel({required this.db});
+  @override
+  State<_SeedPanel> createState() => _SeedPanelState();
+}
+
+class _SeedPanelState extends State<_SeedPanel> {
+  bool _seeding   = false;
+  bool _deleting  = false;
+  String? _msg;
+
+  Future<void> _seed() async {
+    setState(() { _seeding = true; _msg = null; });
+    try {
+      final n = await SeedService().seedAll();
+      setState(() => _msg = '✅ $n documents seeded across all collections.');
+    } catch (e) {
+      setState(() => _msg = '❌ $e');
+    } finally {
+      setState(() => _seeding = false);
+    }
+  }
+
+  Future<void> _delete(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.navyMid,
+        title: const Text('Delete all seed data?',
+            style: TextStyle(color: AppColors.textPrimary)),
+        content: const Text(
+          'This will delete every document with _seeded: true across all '
+          'collections. Real data is not affected.',
+          style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Delete',
+                  style: TextStyle(color: AppColors.ruby))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() { _deleting = true; _msg = null; });
+    try {
+      final n = await SeedService().deleteAllSeedData();
+      setState(() => _msg = '🗑 $n seed documents deleted.');
+    } catch (e) {
+      setState(() => _msg = '❌ $e');
+    } finally {
+      setState(() => _deleting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Row(children: [
+        Expanded(
+          child: ElevatedButton.icon(
+            icon: _seeding
+                ? const SizedBox(width: 14, height: 14,
+                    child: CircularProgressIndicator(
+                        color: Colors.white, strokeWidth: 2))
+                : const Icon(Icons.science_outlined, size: 16),
+            label: const Text('Seed Demo Data'),
+            onPressed: (_seeding || _deleting) ? null : _seed,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: OutlinedButton.icon(
+            icon: _deleting
+                ? const SizedBox(width: 14, height: 14,
+                    child: CircularProgressIndicator(
+                        color: AppColors.ruby, strokeWidth: 2))
+                : const Icon(Icons.delete_sweep_outlined, size: 16),
+            label: const Text('Delete Seed Data'),
+            onPressed: (_seeding || _deleting) ? null : () => _delete(context),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.ruby,
+              side: const BorderSide(color: AppColors.ruby),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+          ),
+        ),
+      ]),
+      if (_msg != null) ...[
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: _msg!.startsWith('✅') || _msg!.startsWith('🗑')
+                ? AppColors.emerald.withAlpha(20)
+                : AppColors.ruby.withAlpha(20),
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(
+              color: _msg!.startsWith('✅') || _msg!.startsWith('🗑')
+                  ? AppColors.emerald.withAlpha(60)
+                  : AppColors.ruby.withAlpha(60),
+            ),
+          ),
+          child: Text(_msg!,
+              style: TextStyle(
+                  fontSize: 12,
+                  color: _msg!.startsWith('✅') || _msg!.startsWith('🗑')
+                      ? AppColors.emerald
+                      : AppColors.ruby)),
+        ),
+      ],
+    ]);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
